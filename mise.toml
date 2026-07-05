@@ -1,0 +1,15 @@
+[tools]
+clojure = "1.12.5.1654"
+java = "temurin-21"
+
+[tasks.test]
+description = "Run the full test suite"
+run = "clojure -X:test"
+
+[tasks.repl]
+description = "Start a REPL with test paths on the classpath"
+run = "clojure -A:repl"
+
+[tasks.bench]
+description = "Run criterium benchmarks over a large generated world"
+run = "clojure -X:bench"

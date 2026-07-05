@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs the exact toolchain pinned in mise.toml (java + clojure)
+      - uses: jdx/mise-action@v2
+        with:
+          cache: true
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: clj-deps-${{ hashFiles('deps.edn') }}
+          restore-keys: clj-deps-
+
+      # Full suite: unit, functional (black-box), generative differential,
+      # and the benchmark-harness smoke test (no criterium timing in CI).
+      - name: Run tests
+        run: mise run test

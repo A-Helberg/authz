@@ -1,0 +1,30 @@
+{:paths ["src"]
+
+ :deps
+ {org.clojure/clojure {:mvn/version "1.12.1"}
+  ;; Used by authz.core/can? and the attr layer to run point checks.
+  ;; The library itself only *generates* Datalog; queries run via datomic.api.
+  com.datomic/peer    {:mvn/version "1.0.7387"
+                       :exclusions  [org.slf4j/slf4j-nop]}}
+
+ :aliases
+ {:test
+  ;; "bench" is on the test path so the benchmark harness itself is
+  ;; smoke-tested (authz.bench-test) without criterium timing.
+  {:extra-paths ["test" "bench"]
+   :extra-deps  {io.github.cognitect-labs/test-runner
+                 {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                 criterium/criterium {:mvn/version "0.4.6"}
+                 org.slf4j/slf4j-nop {:mvn/version "2.0.13"}}
+   :main-opts   ["-m" "cognitect.test-runner"]
+   :exec-fn     cognitect.test-runner.api/test}
+
+  :repl
+  {:extra-paths ["test"]
+   :extra-deps  {org.slf4j/slf4j-nop {:mvn/version "2.0.13"}}}
+
+  :bench
+  {:extra-paths ["test" "bench"]
+   :extra-deps  {criterium/criterium {:mvn/version "0.4.6"}
+                 org.slf4j/slf4j-nop {:mvn/version "2.0.13"}}
+   :exec-fn     authz.bench/run}}}
