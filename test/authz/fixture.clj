@@ -169,12 +169,16 @@
                   :submission/organisation {:read :view :create? true}}}
 
    :folder
-   ;; Exercises create-chains that may target an entity created in the SAME
-   ;; transaction (create a folder and its subfolder together).
+   ;; Recursive: a folder inherits visibility/manageability from its parent
+   ;; folder, bottoming out at a root folder attached to an organisation.
+   ;; Also exercises create-chains that may target an entity created in the
+   ;; SAME transaction (create a folder and its subfolder together).
    {:relations   {:folder/organisation :organisation
                   :folder/parent :folder}
-    :permissions {:view   '(-> :folder/organisation :view)
-                  :manage '(-> :folder/organisation :edit)}
+    :permissions {:view   '(or (-> :folder/organisation :view)
+                                (-> :folder/parent :view))
+                  :manage '(or (-> :folder/organisation :edit)
+                                (-> :folder/parent :manage))}
     :create      '(or (-> :folder/organisation :edit)
                       (-> :folder/parent :manage))
     :delete      :manage
@@ -265,7 +269,10 @@
     :submission/organisation "acme" :submission/content "wes's work"}
    {:submission/id "sub-yara" :submission/submitted-by "yara"
     :submission/organisation "beta" :submission/content "yara's work"}
+   ;; a folder tree: only the root carries the organisation
    {:db/id "folder-root" :folder/name "Root" :folder/organisation "acme"}
+   {:db/id "folder-sub1" :folder/name "Sub1" :folder/parent "folder-root"}
+   {:db/id "folder-sub2" :folder/name "Sub2" :folder/parent "folder-sub1"}
    ;; doc-pub: published; vic may view as viewer, wes is banned
    {:db/id "doc-pub" :doc/title "Doc Pub" :doc/organisation "acme"
     :doc/owner "uma" :doc/viewers ["vic" "wes"] :doc/banned ["wes"]

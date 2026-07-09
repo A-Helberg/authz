@@ -9,9 +9,9 @@
   :submissions [ids] :assignments [ids] :docs [titles]} for a random world:
   a full org/geo hierarchy per org, random site memberships, managers at
   random scope levels, and content with random ownership."
-  [{:keys [seed users orgs sites managers submissions assignments docs]
+  [{:keys [seed users orgs sites managers submissions assignments docs folders]
     :or {seed 42 users 12 orgs 2 sites 6 managers 5
-         submissions 10 assignments 4 docs 6}}]
+         submissions 10 assignments 4 docs 6 folders 8}}]
   (let [rnd (Random. (long seed))
         pick (fn [xs] (nth (vec xs) (.nextInt rnd (count xs))))
         subset (fn [xs p] (filterv (fn [_] (< (.nextDouble rnd) p)) xs))
@@ -30,6 +30,7 @@
      :submissions (mapv #(str "gsub" %) (range submissions))
      :assignments (mapv #(str "gasg" %) (range assignments))
      :docs (mapv #(str "gdoc" %) (range docs))
+     :folders (mapv #(str "gf" %) (range folders))
      :tx
      (-> []
          (into (map (fn [u] {:db/id u :user/name u :user/email (str u "@gen")}))
@@ -82,4 +83,13 @@
                            :doc/status (pick [:published :draft])}
                           (maybe-many :doc/viewers (subset user-ids 0.25))
                           (maybe-many :doc/banned (subset user-ids 0.1)))))
-               (range docs)))}))
+               (range docs))
+         ;; folder trees: roots carry an organisation, the rest hang off an
+         ;; earlier folder (guaranteeing tree shape; cycles are added by the
+         ;; tests that want them)
+         (into (map (fn [i]
+                      (let [base {:db/id (str "f" i) :folder/name (str "gf" i)}]
+                        (if (or (zero? i) (< (.nextDouble rnd) 0.3))
+                          (assoc base :folder/organisation (pick org-ids))
+                          (assoc base :folder/parent (str "f" (.nextInt rnd i)))))))
+               (range folders)))}))

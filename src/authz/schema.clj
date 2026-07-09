@@ -35,15 +35,36 @@
   binding well-formed, and what stops a pure condition or pure exclusion
   from accidentally granting everyone.
 
+  ## Recursion
+
+  Permissions may reference themselves (directly or mutually) through
+  chains — e.g. a folder is visible if its parent folder is:
+
+    :folder {:relations   {:folder/parent :folder
+                           :folder/organisation :organisation}
+             :permissions {:view '(or (-> :folder/organisation :view)
+                                      (-> :folder/parent :view))}}
+
+  Recursive permissions compile to named Datomic rules instead of inline
+  clauses, so their list queries need the rule set passed as the % input —
+  use authz.core/list-query* for those (authz.core/list-query fails loudly).
+  Two things are validated at compile time:
+
+  - every recursive permission must be able to bottom out — some evaluation
+    path must leave its cycle (computed as a fixpoint over the strongly
+    connected component, so mutual recursion with one shared base case is
+    fine, but a permission that can only ever re-enter its cycle is not);
+  - recursion through (not ...) is rejected (non-stratified Datalog).
+
   Relations name Datomic attributes; a leading underscore on the attribute
   name (:manager/_organisation) traverses the attribute in reverse.
 
   `compile-schema` fail-louds on every schema hygiene problem (unknown
-  references, malformed bodies, cycles, ambiguous subject types, ungrounded
-  checks, attributes claimed by two types) and returns an immutable value
-  with every permission pre-compiled to Datalog clauses, its cost-ordered
-  top-level branches (for short-circuiting point checks), and its
-  transitive attribute set."
+  references, malformed bodies, degenerate recursion, ambiguous subject
+  types, ungrounded checks, attributes claimed by two types) and returns an
+  immutable value with every permission pre-compiled — Datalog clauses,
+  named rules where recursion demands them, cost-ordered branches for
+  short-circuiting point checks, and the transitive attribute set."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]))
 
@@ -229,7 +250,7 @@
           (assoc ctx :form (:source node)))))
 
 ;; ---------------------------------------------------------------------------
-;; Cycle detection
+;; The permission graph: SCCs and recursion validation
 
 (defn- chain-edges
   "The [type perm] nodes a check body references through chains."
@@ -240,37 +261,132 @@
     :not (chain-edges defs type (:branch node))
     (:or :and) (transduce (map #(chain-edges defs type %)) into #{} (:branches node))))
 
-(defn- detect-cycles!
-  [defs]
-  (let [visit (fn visit [state [t p :as node] path]
-                (case (get state node)
-                  :done state
-                  :visiting (fail "permission reference cycle"
-                                  {:cycle (conj path node)})
-                  (let [state (reduce (fn [s n] (visit s n (conj path node)))
-                                      (assoc state node :visiting)
-                                      (chain-edges defs t (get-in defs [t :permissions p])))]
-                    (assoc state node :done))))]
-    (reduce (fn [state node] (visit state node []))
-            {}
-            (for [[t d] defs, p (keys (:permissions d))] [t p]))))
+(defn- strongly-connected-components
+  "Tarjan over the permission graph. `nodes` must be in a deterministic
+  order (compilation is a pure function of the registry)."
+  [nodes edges]
+  (let [state (atom {:index 0 :indices {} :low {} :stack [] :on #{} :sccs []})]
+    (letfn [(strong! [v]
+              (swap! state (fn [s] (-> s
+                                       (assoc-in [:indices v] (:index s))
+                                       (assoc-in [:low v] (:index s))
+                                       (update :index inc)
+                                       (update :stack conj v)
+                                       (update :on conj v))))
+              (doseq [w (sort-by str (get edges v))]
+                (cond
+                  (not (contains? (:indices @state) w))
+                  (do (strong! w)
+                      (swap! state update-in [:low v] min (get-in @state [:low w])))
+                  (contains? (:on @state) w)
+                  (swap! state update-in [:low v] min (get-in @state [:indices w]))))
+              (when (= (get-in @state [:low v]) (get-in @state [:indices v]))
+                (swap! state
+                       (fn [s]
+                         (loop [stack (:stack s) on (:on s) scc #{}]
+                           (let [w (peek stack)
+                                 stack (pop stack)
+                                 on (disj on w)
+                                 scc (conj scc w)]
+                             (if (= w v)
+                               (-> s (assoc :stack stack :on on)
+                                   (update :sccs conj scc))
+                               (recur stack on scc))))))))]
+      (doseq [v nodes]
+        (when-not (contains? (:indices @state) v)
+          (strong! v)))
+      (:sccs @state))))
+
+(defn- check-stratified!
+  "Recursion through negation is non-stratified Datalog: a chain under
+  (not ...) may not target a permission in the same cycle."
+  [defs node->scc [type perm :as k] node under-not?]
+  (case (:op node)
+    (:relation :attr=) nil
+    :chain
+    (let [target [(get-in defs [type :relations (:relation node)]) (:permission node)]]
+      (when (and under-not? (= (node->scc k) (node->scc target)))
+        (fail "recursion through (not ...) is not stratified"
+              {:type type :permission perm :target target})))
+    :not (check-stratified! defs node->scc k (:branch node) true)
+    (:or :and) (run! #(check-stratified! defs node->scc k % under-not?) (:branches node))))
+
+(defn- check-base-cases!
+  "Every permission in a cyclic SCC must be able to bottom out: some
+  evaluation path must leave the cycle. Computed as a least fixpoint over
+  the SCC, so mutual recursion sharing one base case is fine, but a
+  permission whose every path re-enters the cycle is rejected."
+  [defs scc]
+  (letfn [(terminates? [ok type node]
+            (case (:op node)
+              (:relation :attr= :not) true
+              :chain (let [tk [(get-in defs [type :relations (:relation node)])
+                               (:permission node)]]
+                       (if (contains? scc tk) (contains? ok tk) true))
+              :or (boolean (some #(terminates? ok type %) (:branches node)))
+              :and (every? #(terminates? ok type %) (:branches node))))]
+    (let [fixpoint (loop [ok #{}]
+                     (let [ok' (into ok
+                                     (filter (fn [[t p]]
+                                               (terminates? ok t (get-in defs [t :permissions p]))))
+                                     scc)]
+                       (if (= ok ok') ok (recur ok'))))]
+      (doseq [[t p] scc]
+        (when-not (contains? fixpoint [t p])
+          (fail "recursive permission can never bottom out — every evaluation path re-enters its own cycle; add a non-recursive (or ...) branch"
+                {:type t :permission p :scc scc}))))))
+
+(defn- reachable-nodes
+  [edges start]
+  (loop [seen #{start} frontier [start]]
+    (if-let [[n & more] (seq frontier)]
+      (let [new (remove seen (get edges n))]
+        (recur (into seen new) (into (vec more) new)))
+      seen)))
 
 ;; ---------------------------------------------------------------------------
-;; Subject-type inference
+;; Subject-type inference and attribute extraction (cycle-safe)
 
 (defn- terminal-targets
   "The set of types that terminals of this check unify the subject with
   (including terminals under (not ...) — exclusion constrains the same
-  subject). Only safe after cycle detection."
-  [defs type node]
+  subject). `visited` cuts cycles."
+  [defs type node visited]
   (case (:op node)
     :relation #{(get-in defs [type :relations (:relation node)])}
     :attr= #{}
-    :chain (let [target (get-in defs [type :relations (:relation node)])]
-             (terminal-targets defs target
-                               (get-in defs [target :permissions (:permission node)])))
-    :not (terminal-targets defs type (:branch node))
-    (:or :and) (transduce (map #(terminal-targets defs type %)) into #{} (:branches node))))
+    :chain (let [target (get-in defs [type :relations (:relation node)])
+                 k [target (:permission node)]]
+             (if (contains? visited k)
+               #{}
+               (terminal-targets defs target
+                                 (get-in defs [target :permissions (:permission node)])
+                                 (conj visited k))))
+    :not (terminal-targets defs type (:branch node) visited)
+    (:or :and) (transduce (map #(terminal-targets defs type % visited))
+                          into #{} (:branches node))))
+
+(defn- node-attrs
+  "The set of Datomic attributes a check touches, transitively through
+  chains, ors, ands, nots and conditions — cycle-safe. Reverse relations
+  are normalized to their forward attribute (that is what appears in
+  datoms)."
+  [defs type node visited]
+  (case (:op node)
+    :relation #{(underlying-attr (:relation node))}
+    :attr= #{(:attr node)}
+    :chain (let [rel (:relation node)
+                 target (get-in defs [type :relations rel])
+                 k [target (:permission node)]]
+             (if (contains? visited k)
+               #{(underlying-attr rel)}
+               (into #{(underlying-attr rel)}
+                     (node-attrs defs target
+                                 (get-in defs [target :permissions (:permission node)])
+                                 (conj visited k)))))
+    :not (node-attrs defs type (:branch node) visited)
+    (:or :and) (transduce (map #(node-attrs defs type % visited))
+                          into #{} (:branches node))))
 
 ;; ---------------------------------------------------------------------------
 ;; Compilation to Datalog
@@ -285,11 +401,20 @@
                    clauses)
     @acc))
 
+(defn rule-sym
+  "The deterministic Datomic rule name for a recursive [type perm]."
+  [[type perm]]
+  (symbol (str "authz-"
+               (str/replace (subs (str type) 1) "/" "-")
+               "--"
+               (str/replace (subs (str perm) 1) "/" "-"))))
+
 (defn- compile-node
-  "Compiles a check node into a vector of Datalog :where clauses.
-  `counter` numbers fresh intermediate variables so compilation is
-  deterministic."
-  [defs type node obj-var subj-var counter]
+  "Compiles a check node into a vector of Datalog :where clauses. Chains
+  into permissions that live in a cycle emit a rule invocation instead of
+  inlining (they cannot be unrolled). `counter` numbers fresh intermediate
+  variables so compilation is deterministic."
+  [defs rule-perms type node obj-var subj-var counter]
   (case (:op node)
     :relation
     [(rel-clause (:relation node) obj-var subj-var)]
@@ -300,29 +425,33 @@
     :chain
     (let [rel (:relation node)
           target (get-in defs [type :relations rel])
+          tk [target (:permission node)]
           ;; Fresh variable: the first hop of a chain must NOT unify with the
           ;; subject, even when the relation targets the subject's type.
           mid (symbol (str "?" (name target) "-" (swap! counter inc)))]
-      (into [(rel-clause rel obj-var mid)]
-            (compile-node defs target
-                          (get-in defs [target :permissions (:permission node)])
-                          mid subj-var counter)))
+      (if (contains? rule-perms tk)
+        [(rel-clause rel obj-var mid)
+         (list (rule-sym tk) mid subj-var)]
+        (into [(rel-clause rel obj-var mid)]
+              (compile-node defs rule-perms target
+                            (get-in defs [target :permissions (:permission node)])
+                            mid subj-var counter))))
 
     :not
-    (let [clauses (compile-node defs type (:branch node) obj-var subj-var counter)
+    (let [clauses (compile-node defs rule-perms type (:branch node) obj-var subj-var counter)
           ;; not-join only over the outer vars the exclusion actually uses —
           ;; e.g. (not (attr= ...)) never mentions the subject
           used (filterv (vars-in clauses) [obj-var subj-var])]
       [(list* 'not-join used clauses)])
 
     :and
-    (into [] (mapcat #(compile-node defs type % obj-var subj-var counter))
+    (into [] (mapcat #(compile-node defs rule-perms type % obj-var subj-var counter))
           (:branches node))
 
     :or
     [(list* 'or-join [obj-var subj-var]
             (map (fn [branch]
-                   (let [clauses (compile-node defs type branch obj-var subj-var counter)]
+                   (let [clauses (compile-node defs rule-perms type branch obj-var subj-var counter)]
                      (if (= 1 (count clauses))
                        (first clauses)
                        (list* 'and clauses))))
@@ -340,21 +469,26 @@
                    clauses)
     @n))
 
-(defn- node-attrs
-  "The set of Datomic attributes a check touches, transitively through
-  chains, ors, ands, nots and conditions. Reverse relations are normalized
-  to their forward attribute (that is what appears in datoms)."
-  [defs type node]
-  (case (:op node)
-    :relation #{(underlying-attr (:relation node))}
-    :attr= #{(:attr node)}
-    :chain (let [rel (:relation node)
-                 target (get-in defs [type :relations rel])]
-             (into #{(underlying-attr rel)}
-                   (node-attrs defs target
-                               (get-in defs [target :permissions (:permission node)]))))
-    :not (node-attrs defs type (:branch node))
-    (:or :and) (transduce (map #(node-attrs defs type %)) into #{} (:branches node))))
+(defn- perm-vars
+  [type subject-type]
+  (let [collision? (= subject-type type)]
+    {:collision? collision?
+     :object-var (symbol (str "?" (name type)))
+     :subject-var (if collision?
+                    (symbol (str "?" (name subject-type) "-subject"))
+                    (symbol (str "?" (name subject-type))))}))
+
+(defn- compile-rule-defs
+  "One Datomic rule definition per top-level or-branch of a recursive
+  permission (multiple definitions with the same head = disjunction)."
+  [defs rule-perms subject-types [type perm :as k]]
+  (let [node (get-in defs [type :permissions perm])
+        {:keys [object-var subject-var]} (perm-vars type (get subject-types k))
+        head (list (rule-sym k) object-var subject-var)]
+    (mapv (fn [b]
+            (into [head]
+                  (compile-node defs rule-perms type b object-var subject-var (atom 0))))
+          (if (= :or (:op node)) (:branches node) [node]))))
 
 ;; ---------------------------------------------------------------------------
 ;; :create rules
@@ -444,83 +578,119 @@
         (check-refs! defs type create {:type type :create true})
         (validate-create! defs type create {:type type :create true})
         (validate-grounded! create {:type type :create true})))
-    (detect-cycles! defs)
-    ;; Attr sections, create-settable attrs, delete rules, attr->type map.
-    (doseq [[type d] defs]
-      (validate-attrs! defs type (:attrs d) {:type type})
-      (when-let [create (:create d)]
-        (doseq [rel (create-rule-relations create)]
-          (when-not (contains? (:attrs d) rel)
-            (fail "create rule relation must be declared in :attrs"
-                  {:type type :relation rel}))))
-      (when-let [delete (:delete d)]
-        (when-not (contains? (:permissions d) delete)
-          (fail ":delete must name a permission on the same type"
-                {:type type :delete delete
-                 :known (set (keys (:permissions d)))}))))
-    (let [attr->type (reduce (fn [m [type attr]]
-                               (if-let [other (get m attr)]
-                                 (fail "attr declared by more than one type"
-                                       {:attr attr :types [other type]})
-                                 (assoc m attr type)))
-                             {}
-                             (for [[type d] defs, attr (keys (:attrs d))] [type attr]))
-          types (reduce-kv
-                 (fn [types type d]
-                   (let [attrs (:attrs d)
-                         create-rels (some-> (:create d) create-rule-relations)
-                         settable (into #{}
-                                        (keep (fn [[attr spec]]
-                                                (when (if (contains? spec :create?)
-                                                        (:create? spec)
-                                                        (or (:write spec)
-                                                            (contains? create-rels attr)))
-                                                  attr)))
-                                        attrs)]
-                     (assoc types type
-                            (assoc d
-                                   :readable (into #{} (keep (fn [[a s]] (when (:read s) a))) attrs)
-                                   :writable (into #{} (keep (fn [[a s]] (when (:write s) a))) attrs)
-                                   :settable-at-create settable))))
-                 {} defs)
-          compiled (reduce
-                    (fn [compiled [type perm]]
-                      (let [node (get-in defs [type :permissions perm])
-                            targets (terminal-targets defs type node)
-                            _ (when (not= 1 (count targets))
-                                (fail "permission terminals unify the subject with more than one type"
-                                      {:type type :permission perm :targets targets}))
-                            subject-type (first targets)
-                            collision? (= subject-type type)
-                            obj-var (symbol (str "?" (name type)))
-                            subj-var (if collision?
-                                       (symbol (str "?" (name subject-type) "-subject"))
-                                       (symbol (str "?" (name subject-type))))
-                            clauses (compile-node defs type node obj-var subj-var (atom 0))
-                            ;; Top-level or branches compile separately, cost-
-                            ;; ordered, so point checks can short-circuit on
-                            ;; the cheap branch (usually a direct terminal).
-                            branches (->> (if (= :or (:op node)) (:branches node) [node])
-                                          (mapv (fn [b]
-                                                  (let [cs (compile-node defs type b obj-var subj-var (atom 0))]
-                                                    {:clauses cs
-                                                     :cost (pattern-count cs)
-                                                     :source (:source b)})))
-                                          (sort-by :cost)
-                                          vec)]
-                        (assoc compiled [type perm]
-                               {:object-type type
-                                :permission perm
-                                :subject-type subject-type
-                                :object-var obj-var
-                                :subject-var subj-var
-                                :collision? collision?
-                                :clauses clauses
-                                :branches branches
-                                :attrs (node-attrs defs type node)})))
-                    {}
-                    (for [[t d] defs, p (keys (:permissions d))] [t p]))]
-      {:authz/schema? true
-       :types types
-       :attr->type attr->type
-       :compiled compiled})))
+    ;; The permission graph: recursion is allowed, but must be stratified
+    ;; and able to bottom out.
+    (let [nodes (vec (sort-by str (for [[t d] defs, p (keys (:permissions d))] [t p])))
+          edges (into {} (map (fn [[t p :as k]]
+                                [k (chain-edges defs t (get-in defs [t :permissions p]))]))
+                      nodes)
+          sccs (strongly-connected-components nodes edges)
+          node->scc (into {} (for [scc sccs, n scc] [n scc]))
+          cyclic-sccs (filterv (fn [scc]
+                                 (or (> (count scc) 1)
+                                     (contains? (get edges (first scc)) (first scc))))
+                               sccs)
+          recursive (into #{} cat cyclic-sccs)]
+      (doseq [[t p :as k] nodes]
+        (check-stratified! defs node->scc k (get-in defs [t :permissions p]) false))
+      (run! #(check-base-cases! defs %) cyclic-sccs)
+      ;; Attr sections, create-settable attrs, delete rules, attr->type map.
+      (doseq [[type d] defs]
+        (validate-attrs! defs type (:attrs d) {:type type})
+        (when-let [create (:create d)]
+          (doseq [rel (create-rule-relations create)]
+            (when-not (contains? (:attrs d) rel)
+              (fail "create rule relation must be declared in :attrs"
+                    {:type type :relation rel}))))
+        (when-let [delete (:delete d)]
+          (when-not (contains? (:permissions d) delete)
+            (fail ":delete must name a permission on the same type"
+                  {:type type :delete delete
+                   :known (set (keys (:permissions d)))}))))
+      (let [attr->type (reduce (fn [m [type attr]]
+                                 (if-let [other (get m attr)]
+                                   (fail "attr declared by more than one type"
+                                         {:attr attr :types [other type]})
+                                   (assoc m attr type)))
+                               {}
+                               (for [[type d] defs, attr (keys (:attrs d))] [type attr]))
+            types (reduce-kv
+                   (fn [types type d]
+                     (let [attrs (:attrs d)
+                           create-rels (some-> (:create d) create-rule-relations)
+                           settable (into #{}
+                                          (keep (fn [[attr spec]]
+                                                  (when (if (contains? spec :create?)
+                                                          (:create? spec)
+                                                          (or (:write spec)
+                                                              (contains? create-rels attr)))
+                                                    attr)))
+                                          attrs)]
+                       (assoc types type
+                              (assoc d
+                                     :readable (into #{} (keep (fn [[a s]] (when (:read s) a))) attrs)
+                                     :writable (into #{} (keep (fn [[a s]] (when (:write s) a))) attrs)
+                                     :settable-at-create settable))))
+                   {} defs)
+            subject-types (into {}
+                                (map (fn [[t p :as k]]
+                                       (let [targets (terminal-targets
+                                                      defs t (get-in defs [t :permissions p]) #{})]
+                                         (when (not= 1 (count targets))
+                                           (fail "permission terminals unify the subject with more than one type"
+                                                 {:type t :permission p :targets targets}))
+                                         [k (first targets)])))
+                                nodes)
+            rule-defs (into {}
+                            (map (fn [k] [k (compile-rule-defs defs recursive subject-types k)]))
+                            (sort-by str recursive))
+            compiled (reduce
+                      (fn [compiled [type perm :as k]]
+                        (let [node (get-in defs [type :permissions perm])
+                              subject-type (get subject-types k)
+                              {:keys [collision? object-var subject-var]} (perm-vars type subject-type)
+                              recursive? (contains? recursive k)
+                              clauses (if recursive?
+                                        ;; a recursive permission IS its rule
+                                        [(list (rule-sym k) object-var subject-var)]
+                                        (compile-node defs recursive type node
+                                                      object-var subject-var (atom 0)))
+                              rules (->> (reachable-nodes edges k)
+                                         (filter recursive)
+                                         (sort-by str)
+                                         (mapcat rule-defs)
+                                         vec)
+                              ;; Top-level or branches compile separately, cost-
+                              ;; ordered, so point checks can short-circuit on
+                              ;; the cheap branch (usually a direct terminal).
+                              branches (->> (if (= :or (:op node)) (:branches node) [node])
+                                            (mapv (fn [b]
+                                                    (let [cs (compile-node defs recursive type b
+                                                                           object-var subject-var (atom 0))]
+                                                      {:clauses cs
+                                                       :cost (pattern-count cs)
+                                                       :source (:source b)
+                                                       ;; point checks evaluate the normalized
+                                                       ;; node by direct index walk
+                                                       :node b})))
+                                            (sort-by :cost)
+                                            vec)]
+                          (assoc compiled k
+                                 {:object-type type
+                                  :permission perm
+                                  :subject-type subject-type
+                                  :object-var object-var
+                                  :subject-var subject-var
+                                  :collision? collision?
+                                  :recursive? recursive?
+                                  :clauses clauses
+                                  :rules rules
+                                  :branches branches
+                                  :attrs (node-attrs defs type node #{})})))
+                      {}
+                      nodes)]
+        {:authz/schema? true
+         :types types
+         :attr->type attr->type
+         :recursive recursive
+         :compiled compiled}))))

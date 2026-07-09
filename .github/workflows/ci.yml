@@ -30,3 +30,13 @@ jobs:
       # and the benchmark-harness smoke test (no criterium timing in CI).
       - name: Run tests
         run: mise run test
+
+      # The tutorial: evaluate every snippet on the JVM (a snippet that
+      # throws fails here), then render-smoke-test every page.
+      - name: Docs — install JS deps
+        run: bun install
+        working-directory: docs
+      - name: Docs — evaluate tutorial snippets
+        run: mise run docs:gen
+      - name: Docs — smoke-test every page
+        run: mise run docs:test

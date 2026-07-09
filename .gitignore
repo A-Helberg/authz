@@ -3,3 +3,8 @@
 .clj-kondo/.cache/
 .lsp/.cache/
 target/
+docs/node_modules/
+docs/.shadow-cljs/
+docs/out/
+docs/resources/public/js/
+docs/resources/public/css/

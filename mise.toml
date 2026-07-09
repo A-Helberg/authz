@@ -1,6 +1,8 @@
 [tools]
 clojure = "1.12.5.1654"
 java = "temurin-21"
+bun = "1.2.19"
+node = "22"
 
 [tasks.test]
 description = "Run the full test suite"
@@ -13,3 +15,35 @@ run = "clojure -A:repl"
 [tasks.bench]
 description = "Run criterium benchmarks over a large generated world"
 run = "clojure -X:bench"
+
+[tasks."docs:gen"]
+description = "Evaluate tutorial snippets on the JVM, capture their results"
+dir = "docs"
+run = "clojure -X:gen"
+
+[tasks."docs:css"]
+description = "One-shot Tailwind build for the docs site"
+dir = "docs"
+run = "bunx tailwindcss -i tailwind.css -o resources/public/css/app.css"
+
+[tasks."docs:watch"]
+description = "shadow-cljs watch for the docs site on :8080 (run docs:gen and docs:css first)"
+dir = "docs"
+run = "bunx shadow-cljs -A:cljs watch app"
+
+[tasks."docs:build"]
+description = "Full docs release build (gen + css + shadow release)"
+dir = "docs"
+run = [
+  "clojure -X:gen",
+  "bunx tailwindcss -i tailwind.css -o resources/public/css/app.css",
+  "bunx shadow-cljs -A:cljs release app",
+]
+
+[tasks."docs:test"]
+description = "Render-smoke-test every tutorial page under happy-dom"
+dir = "docs"
+run = [
+  "bunx shadow-cljs -A:cljs:test compile node-test",
+  "node --conditions=browser out/node-tests.js",
+]

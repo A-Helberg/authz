@@ -20,18 +20,20 @@
         (keys fx/users)))
 
 (defn- list-eids
-  "Runs list-query for one subject and returns the matching object eids."
+  "Runs list-query* for one subject and returns the matching object eids."
   [db type perm subject-eid]
   (let [collision? (= type :user)
         opts (when collision? {:object-var '?target :subject-var '?subject})
         obj-var (if collision? '?target (symbol (str "?" (name type))))
-        subj-var (if collision? '?subject '?user)]
+        subj-var (if collision? '?subject '?user)
+        {:keys [where rules]} (authz/list-query* fx/compiled type perm :user opts)]
     (into #{}
           (map first)
-          (d/q {:find [obj-var]
-                :in ['$ subj-var]
-                :where (authz/list-query fx/compiled type perm :user opts)}
-               *db* subject-eid))))
+          (if (seq rules)
+            (d/q {:find [obj-var] :in ['$ '% subj-var] :where where}
+                 *db* rules subject-eid)
+            (d/q {:find [obj-var] :in ['$ subj-var] :where where}
+                 *db* subject-eid)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Scoped visibility through the hierarchy
@@ -126,6 +128,54 @@
           "and the flip touches the watch-set, so reactive layers re-run"))))
 
 ;; ---------------------------------------------------------------------------
+;; Recursive permissions: folder trees
+
+(deftest folders-inherit-through-arbitrary-nesting
+  (let [db *db*
+        sub2 (fx/folder db "Sub2")]
+    (testing "grants flow from the root's organisation down the whole tree"
+      (is (= #{:alice :sena :mia :sam} (who-can? db :folder :view sub2))
+          "Sub2 has no organisation of its own — everything comes via Sub1 -> Root")
+      (is (= #{:alice :sam} (who-can? db :folder :manage sub2))))
+    (testing "explain walks the recursion"
+      (is (= {:granted? true :via '(-> :folder/parent :view)}
+             (authz/explain fx/compiled db :user (fx/user db :alice) :view :folder sub2))))
+    (testing "list-query refuses; list-query* carries the rules"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"list-query\*"
+                            (authz/list-query fx/compiled :folder :view :user)))
+      (let [{:keys [where rules]} (authz/list-query* fx/compiled :folder :view :user)]
+        (is (seq rules))
+        (is (= #{(fx/folder db "Root") (fx/folder db "Sub1") sub2}
+               (into #{} (map first)
+                     (d/q {:find '[?folder] :in '[$ % ?user] :where where}
+                          db rules (fx/user db :mia))))
+            "an org member lists the entire tree in one query")
+        (is (= #{}
+               (into #{} (map first)
+                     (d/q {:find '[?folder] :in '[$ % ?user] :where where}
+                          db rules (fx/user db :bob))))
+            "the other org's admin lists nothing")))))
+
+(deftest cyclic-folder-data-terminates
+  (let [conn (fx/fresh-conn)
+        db (:db-after @(d/transact conn [{:db/id "ca" :folder/name "CycA" :folder/parent "cb"}
+                                         {:db/id "cb" :folder/name "CycB" :folder/parent "ca"}]))
+        alice (fx/user db :alice)
+        cyc-a (fx/folder db "CycA")
+        cyc-b (fx/folder db "CycB")]
+    (testing "a parent cycle with no grounding grants nothing — and returns"
+      (is (false? (authz/can? fx/compiled db :user alice :view :folder cyc-a)))
+      (is (false? (authz/can? fx/compiled db :user alice :view :folder cyc-b))))
+    (testing "grounding one member of the cycle grants both, everywhere"
+      (let [db (:db-after @(d/transact conn [[:db/add cyc-b :folder/organisation (fx/org db "Acme")]]))]
+        (is (authz/can? fx/compiled db :user alice :view :folder cyc-a))
+        (is (authz/can? fx/compiled db :user alice :view :folder cyc-b))
+        (is (= #{cyc-a cyc-b}
+               (authz/filter-authorized fx/compiled db :user alice :view :folder
+                                        [cyc-a cyc-b]))
+            "the Datalog rules agree with the walker on cyclic data")))))
+
+;; ---------------------------------------------------------------------------
 ;; explain
 
 (deftest explain-reports-the-granting-branch
@@ -155,7 +205,7 @@
                   :assignment   [(fx/assignment db "asg-uma")]
                   :submission   (mapv #(fx/submission db %) ["sub-uma" "sub-wes" "sub-yara"])
                   :doc          (mapv #(fx/doc db %) ["Doc Pub" "Doc Draft"])
-                  :folder       [(fx/folder db "Root")]
+                  :folder       (mapv #(fx/folder db %) ["Root" "Sub1" "Sub2"])
                   :user         (mapv #(fx/user db %) (keys fx/users))}
         perms [[:site :view] [:site :view-members]
                [:organisation :view] [:organisation :edit] [:organisation :admin-view]

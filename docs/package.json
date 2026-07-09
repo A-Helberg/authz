@@ -1,0 +1,16 @@
+{
+  "name": "authz-docs",
+  "private": true,
+  "packageManager": "bun@1.2.19",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.2",
+    "@tailwindcss/typography": "^0.5.20",
+    "happy-dom": "^20.10.6",
+    "shadow-cljs": "^2.28.17",
+    "tailwindcss": "^4.3.2"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "solid-js": "^1.9.5"
+  }
+}

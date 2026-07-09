@@ -228,12 +228,71 @@
 (deftest rejects-unknown-definition-keys
   (is (schema-error {:a {:permission {:p :a/u}}})))
 
-(deftest rejects-permission-cycles
-  (let [err (schema-error {:a {:relations   {:a/b :b}
-                               :permissions {:p '(-> :a/b :q)}}
-                           :b {:relations   {:b/a :a}
-                               :permissions {:q '(-> :b/a :p)}}})]
-    (is (vector? (:cycle err)))))
+(deftest rejects-recursion-that-cannot-bottom-out
+  (testing "a mutual cycle with no base case anywhere"
+    (let [err (schema-error {:a {:relations   {:a/b :b}
+                                 :permissions {:p '(-> :a/b :q)}}
+                             :b {:relations   {:b/a :a}
+                                 :permissions {:q '(-> :b/a :p)}}})]
+      (is (set? (:scc err)))))
+  (testing "self-recursion with no base case"
+    (is (schema-error {:user {}
+                       :f    {:relations   {:f/parent :f :f/owner :user}
+                              :permissions {:p '(-> :f/parent :p)}}})))
+  (testing "(and base recursive-chain) still never bottoms out"
+    (is (schema-error {:user {}
+                       :f    {:relations   {:f/parent :f :f/owner :user}
+                              :permissions {:p '(and :f/owner (-> :f/parent :p))}}}))))
+
+(deftest recursion-with-a-base-case-compiles-to-rules
+  (let [c (schema/compile-schema
+           {:user {}
+            :f    {:relations   {:f/parent :f :f/owner :user}
+                   :permissions {:p '(or :f/owner (-> :f/parent :p))}}})]
+    (is (schema/compiled? c))
+    (is (= '[(authz-f--p ?f ?user)]
+           (get-in c [:compiled [:f :p] :clauses]))
+        "a recursive permission's clauses are one invocation of its rule")
+    (is (= '[[(authz-f--p ?f ?user) [?f :f/owner ?user]]
+             [(authz-f--p ?f ?user) [?f :f/parent ?f-1] (authz-f--p ?f-1 ?user)]]
+           (get-in c [:compiled [:f :p] :rules]))
+        "one rule definition per or-branch; the recursive branch re-invokes")
+    (is (true? (get-in c [:compiled [:f :p] :recursive?])))
+    (is (= #{:f/owner :f/parent} (get-in c [:compiled [:f :p] :attrs]))
+        "attribute extraction reaches through the cycle exactly once")))
+
+(deftest mutual-recursion-sharing-a-base-case-compiles
+  ;; q has no base case of its own, but bottoms out through p's — the
+  ;; fixpoint validation accepts this
+  (let [c (schema/compile-schema
+           {:user {}
+            :a    {:relations   {:a/b :b :a/owner :user}
+                   :permissions {:p '(or :a/owner (-> :a/b :q))}}
+            :b    {:relations   {:b/a :a}
+                   :permissions {:q '(-> :b/a :p)}}})]
+    (is (schema/compiled? c))
+    (is (= 3 (count (get-in c [:compiled [:b :q] :rules])))
+        "q's rule set carries every definition of its cycle: p's two branches + q's one")))
+
+(deftest rejects-recursion-through-negation
+  (is (schema-error {:user {}
+                     :f    {:relations   {:f/parent :f :f/owner :user}
+                            :permissions {:p '(or :f/owner
+                                                  (and :f/owner
+                                                       (not (-> :f/parent :p))))}}})))
+
+(deftest non-recursive-perm-chaining-into-recursion-carries-the-rules
+  (let [c (schema/compile-schema
+           {:user {}
+            :f    {:relations   {:f/parent :f :f/owner :user}
+                   :permissions {:p '(or :f/owner (-> :f/parent :p))}}
+            :doc  {:relations   {:doc/folder :f}
+                   :permissions {:view '(-> :doc/folder :p)}}})]
+    (is (false? (get-in c [:compiled [:doc :view] :recursive?])))
+    (is (= '[[?doc :doc/folder ?f-1] (authz-f--p ?f-1 ?user)]
+           (get-in c [:compiled [:doc :view] :clauses]))
+        "the chain stops inlining at the cycle boundary and invokes the rule")
+    (is (seq (get-in c [:compiled [:doc :view] :rules])))))
 
 (deftest rejects-terminals-unifying-multiple-subject-types
   (let [err (schema-error {:user {}

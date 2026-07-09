@@ -17,6 +17,7 @@
    [:submission :view] [:submission :edit]
    [:assignment :view] [:assignment :react]
    [:doc :view] [:doc :edit]
+   [:folder :view] [:folder :manage]
    [:user :view]])
 
 (defn- list-eids
@@ -24,13 +25,15 @@
   (let [collision? (= type :user)
         opts (when collision? {:object-var '?target :subject-var '?subject})
         obj-var (if collision? '?target (symbol (str "?" (name type))))
-        subj-var (if collision? '?subject '?user)]
+        subj-var (if collision? '?subject '?user)
+        {:keys [where rules]} (authz/list-query* fx/compiled type perm :user opts)]
     (into #{}
           (map first)
-          (d/q {:find [obj-var]
-                :in ['$ subj-var]
-                :where (authz/list-query fx/compiled type perm :user opts)}
-               db subject-eid))))
+          (if (seq rules)
+            (d/q {:find [obj-var] :in ['$ '% subj-var] :where where}
+                 db rules subject-eid)
+            (d/q {:find [obj-var] :in ['$ subj-var] :where where}
+                 db subject-eid)))))
 
 (defn- world-entities
   [db world]
@@ -39,6 +42,9 @@
    :submission (mapv #(d/entid db [:submission/id %]) (:submissions world))
    :assignment (mapv #(d/entid db [:assignment/id %]) (:assignments world))
    :doc (mapv #(d/entid db [:doc/title %]) (:docs world))
+   :folder (into (mapv #(d/entid db [:folder/name %]) (:folders world))
+                 [(d/entid db [:folder/name "gcyc-a"])
+                  (d/entid db [:folder/name "gcyc-b"])])
    :user (mapv #(d/entid db [:user/email %]) (:users world))})
 
 (deftest compiled-datalog-agrees-with-reference-interpreter
@@ -46,6 +52,14 @@
     (let [world (gen/world-tx {:seed seed})
           conn (fx/empty-conn)
           _ @(d/transact conn (:tx world))
+          ;; a hostile parent cycle, grounded on one side: walker, rules and
+          ;; reference must all terminate and agree on it
+          _ @(d/transact conn [{:db/id "cyc-a" :folder/name "gcyc-a"
+                                :folder/parent "cyc-b"}
+                               {:db/id "cyc-b" :folder/name "gcyc-b"
+                                :folder/parent "cyc-a"
+                                :folder/organisation
+                                [:organisation/name (first (:orgs world))]}])
           db (d/db conn)
           entities (world-entities db world)
           user-eids (:user entities)]

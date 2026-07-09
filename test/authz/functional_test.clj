@@ -463,6 +463,66 @@
       (is (pos? (:hits (cache/stats c)))))))
 
 ;; ---------------------------------------------------------------------------
+;; Recursive permissions: the public contract
+
+(deftest recursive-permissions-contract
+  (let [reg {:user {}
+             :node {:relations   {:node/owner :user
+                                  :node/parent :node}
+                    :permissions {:view '(or :node/owner (-> :node/parent :view))}}}
+        rschema (schema/compile-schema reg)
+        uri (str "datomic:mem://" (d/squuid))
+        _ (d/create-database uri)
+        conn (d/connect uri)
+        _ @(d/transact conn [{:db/ident :node/owner :db/valueType :db.type/ref
+                              :db/cardinality :db.cardinality/one}
+                             {:db/ident :node/parent :db/valueType :db.type/ref
+                              :db/cardinality :db.cardinality/one}
+                             {:db/ident :node/name :db/valueType :db.type/string
+                              :db/cardinality :db.cardinality/one
+                              :db/unique :db.unique/identity}
+                             {:db/ident :person/handle :db/valueType :db.type/string
+                              :db/cardinality :db.cardinality/one
+                              :db/unique :db.unique/identity}])
+        _ @(d/transact conn [{:db/id "owner" :person/handle "owner"}
+                             {:db/id "other" :person/handle "other"}
+                             {:db/id "n0" :node/name "n0" :node/owner "owner"}
+                             {:db/id "n1" :node/name "n1" :node/parent "n0"}
+                             {:db/id "n2" :node/name "n2" :node/parent "n1"}
+                             {:db/id "n3" :node/name "n3" :node/parent "n2"}])
+        db (d/db conn)
+        node (fn [n] (d/entid db [:node/name n]))
+        owner (d/entid db [:person/handle "owner"])
+        other (d/entid db [:person/handle "other"])]
+    (testing "ownership inherits down arbitrary nesting"
+      (is (authz/can? rschema db :user owner :view :node (node "n3")))
+      (is (not (authz/can? rschema db :user other :view :node (node "n3")))))
+    (testing "list-query fails loudly; list-query* is the sanctioned path"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"list-query\*"
+                            (authz/list-query rschema :node :view :user)))
+      (let [{:keys [where rules]} (authz/list-query* rschema :node :view :user)]
+        (is (seq rules))
+        (is (= #{(node "n0") (node "n1") (node "n2") (node "n3")}
+               (into #{} (map first)
+                     (d/q {:find '[?node] :in '[$ % ?user] :where where}
+                          db rules owner))))))
+    (testing "list-query* also serves non-recursive permissions, with empty rules"
+      (let [{:keys [where rules]} (authz/list-query* compiled :task :view :user)]
+        (is (empty? rules))
+        (is (vector? where))))
+    (testing "cyclic data terminates and answers correctly"
+      (let [db (:db-after @(d/transact conn [{:db/id "c1" :node/name "c1" :node/parent "c2"}
+                                             {:db/id "c2" :node/name "c2" :node/parent "c1"}]))
+            c1 (d/entid db [:node/name "c1"])]
+        (is (false? (authz/can? rschema db :user owner :view :node c1))
+            "an ungrounded cycle grants nothing — and returns")
+        (let [db (:db-after @(d/transact conn [[:db/add (d/entid db [:node/name "c2"])
+                                                :node/owner owner]]))]
+          (is (true? (authz/can? rschema db :user owner :view :node
+                                 (d/entid db [:node/name "c1"])))
+              "grounding one member of the cycle grants through it"))))))
+
+;; ---------------------------------------------------------------------------
 ;; Errors are loud and carry data
 
 (deftest error-contract
