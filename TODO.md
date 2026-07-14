@@ -1,0 +1,1 @@
+The ROADMAP's remaining items are now the offline-path protocol work (zookies, schema-version tokens, retractEntity cascades), statistics-based branch costs, finer reactive invalidation, and Leopard materialization — all with this same measure-first discipline waiting for them.

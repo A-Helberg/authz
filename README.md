@@ -303,6 +303,16 @@ how many datoms come in.
 @(d/transact conn (attrs/authorize-tx! schema db user-eid tx-data))
 ```
 
+`authorize-tx!` is the guard for the online request/response boundary.
+For offline sync-up, prefer the reconciliation shape: land the device's
+batch verbatim as *claims* (facts about what the device observed), then
+use `check-tx` — a pure, non-throwing judgment over any db value — as
+the adjudicator inside your reconciliation process, recording denials as
+facts rather than bouncing history. Which db value constitutes authority
+is the process's choice: current db for revocation-effective semantics,
+a server-recorded `as-of` for charter semantics. (See ROADMAP,
+"Offline: a stance, not a roadmap".)
+
 The transaction is applied **speculatively with `d/with`** and the *actual
 resulting datoms* are checked, not the tx forms. Datomic therefore handles
 map expansion, nested maps, reverse attributes, cardinality, lookup refs

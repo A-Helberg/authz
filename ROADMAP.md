@@ -7,8 +7,8 @@ library's compile-to-query architecture.
 A guiding observation: Zanzibar's zookie protocol exists to keep checks
 consistent with the content they protect. Because we splice authorization
 into the same Datomic query on the same immutable `db` value, the online
-path gets that consistency for free. The offline path re-opens the problem
-— several items below are about closing it there.
+path gets that consistency for free. The offline path is not a problem
+this library closes — see the stance below the Done section.
 
 ## Done
 
@@ -163,16 +163,39 @@ path gets that consistency for free. The offline path re-opens the problem
   and pages go deep. Cursors carry their mode; mixing orders across a
   session fails loudly.
 
+## Offline: a stance, not a roadmap
+
+Two items used to live here — sync tokens ("zookies") and schema-version
+tokens. Both are deleted, deliberately, after working the design through:
+
+- **Delta-sync is a transport concern.** "What changed since t, what
+  should the client drop" is the sync protocol's job, not the
+  authorization layer's — if the transport had it built in, the question
+  would never have reached this file. The authz layer's entire
+  contribution is already shipped and already composes: `readable-datoms`
+  is a pure filter over whatever datoms the transport produces (a full
+  slice, a `d/tx-range` delta, anything). Likewise the allow-list is
+  small; a reconnecting client just refreshes it.
+- **Datoms are facts, and sync-up is reconciliation, not a gate.** An
+  offline device's edits happened; bouncing them at a gate is pretending
+  history didn't. Land the batch verbatim as *claims* (assertions about
+  what the device observed, annotated with device and claimed time —
+  submitting your own observations needs almost no authority), then run a
+  domain reconciliation process that promotes claims into domain state
+  where authority allows and records denial as a fact where it doesn't —
+  queryable, auditable, re-adjudicable. `check-tx` is the adjudicator
+  inside that process: a pure, non-throwing judgment over any db value,
+  so the *authority basis* (current db for revocation-effective
+  semantics; a server-recorded `d/as-of` for charter semantics) is the
+  process's choice, not the library's. `authorize-tx!`, the throwing
+  guard, is for the online request/response boundary where a dock
+  actually exists.
+
+The library owns "may this subject do this to this object, at this db
+value" — judgment functions over values. Transport moves facts;
+processes adjudicate them.
+
 ## Next
-- **Sync tokens for the offline path (zookies).** Stamp every sync-down
-  batch with `d/basis-t`; clients echo the last basis-t they saw. Lets the
-  server detect revocations between sync points ("re-filter everything
-  since t") instead of trusting the client's stale view. Design a
-  revocation-diff API: given (subject, db-from, db-to), which previously
-  synced datoms are no longer readable?
-- **Schema version tokens.** Offline clients cache the attr allow-list; a
-  version stamp (hash of the compiled schema) lets them detect that their
-  cached notion of "what I may edit" is outdated.
 - **Finer-grained reactive invalidation.** `list-query-attrs`
   over-approximates: any touched watched attr re-runs the subscription.
   Given a tx datom `[e a v]`, a small connectivity probe could decide
