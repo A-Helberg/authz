@@ -103,12 +103,15 @@ path gets that consistency for free. The offline path re-opens the problem
   (`verification/obligations/`, each stated with a proof plan):
   walker soundness + completeness (the visited-set lemma — underwrites
   `can?`, `explain`, the reference interpreter, and `grants`
-  verification), enumeration exactness (model the gen-graph traversal;
-  subsumes the pure-closure exactness argument that currently lives in
-  a code comment), finiteness from safety, and
-  stratification-independence. Then: an executable refinement of the
-  spec exported to Scala for a runtime-checkable kernel (the
-  bounded-iteration evaluator + proof it equals the lfp).
+  verification; note the two directions are mutually recursive through
+  negation, so the induction is simultaneous over strata), enumeration
+  exactness (model the gen-graph traversal; subsumes the pure-closure
+  exactness argument that currently lives in a code comment), and
+  stratification-independence. Finiteness-from-safety is **done**
+  (`grants_finite`, machine-checked in the checked session). Then: an
+  executable refinement of the spec exported to Scala for a
+  runtime-checkable kernel (the bounded-iteration evaluator + proof it
+  equals the lfp).
 - **Random registries in the generative suite.** Worlds are generated;
   the registry is still the fixed fixture. Schema-space is where
   compilation bugs live (collision vars, SCC shapes, mutual recursion,

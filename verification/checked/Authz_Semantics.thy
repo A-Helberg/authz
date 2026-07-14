@@ -294,4 +294,80 @@ proof -
   qed
 qed
 
+text \<open>Safety implies finiteness (Obligation E's precondition, discharged):
+  a generative check confines its object to the active domain, every fact
+  in the fixpoint tower originates from some satisfaction, hence every
+  answer set of a safe registry lives inside \<open>adom D\<close> -- finite whenever
+  the database is. This is the semantic content of the groundedness
+  validator: without it, a pure condition or exclusion would grant over
+  the ambient universe.\<close>
+
+lemma generative_sat_adom:
+  assumes "generative c" and "sat \<Gamma> D I T c s ob"
+  shows "ob \<in> adom D"
+  using assms
+proof (induction c)
+  case (Terminal r)
+  then show ?case by (auto intro: ext_fst_adom)
+next
+  case (Chain r q)
+  then show ?case by (auto intro: ext_fst_adom)
+next
+  case (CAnd c1 c2)
+  then show ?case by auto
+next
+  case (COr c1 c2)
+  then show ?case by auto
+qed simp_all
+
+lemma strata_origin:
+  assumes strat: "stratified \<Gamma> \<sigma>"
+  shows "x \<in> strata \<Gamma> D \<sigma> n \<Longrightarrow>
+           \<exists>T p s ob c I. x = ((T, p), s, ob) \<and>
+                          perms \<Gamma> T p = Some c \<and> sat \<Gamma> D I T c s ob"
+proof (induction n)
+  case 0
+  have unfold: "strata \<Gamma> D \<sigma> 0 = stepF \<Gamma> D \<sigma> 0 {} (strata \<Gamma> D \<sigma> 0)"
+    using lfp_unfold[OF stepF_mono[OF strat]] by simp
+  from "0.prems" show ?case
+    by (subst (asm) unfold) (auto simp: stepF_def)
+next
+  case (Suc n)
+  have unfold: "strata \<Gamma> D \<sigma> (Suc n) =
+          stepF \<Gamma> D \<sigma> (Suc n) (strata \<Gamma> D \<sigma> n) (strata \<Gamma> D \<sigma> (Suc n))"
+    using lfp_unfold[OF stepF_mono[OF strat]] by simp
+  from Suc.prems
+  have "x \<in> stepF \<Gamma> D \<sigma> (Suc n) (strata \<Gamma> D \<sigma> n) (strata \<Gamma> D \<sigma> (Suc n))"
+    by (subst (asm) unfold)
+  then consider (lower) "x \<in> strata \<Gamma> D \<sigma> n"
+    | (new) T p s ob c where "x = ((T, p), s, ob)" "perms \<Gamma> T p = Some c"
+        "sat \<Gamma> D (strata \<Gamma> D \<sigma> n \<union> restr \<sigma> (Suc n) (strata \<Gamma> D \<sigma> (Suc n)))
+             T c s ob"
+    by (auto simp: stepF_def)
+  then show ?case
+  proof cases
+    case lower with Suc.IH show ?thesis by blast
+  next
+    case new then show ?thesis by blast
+  qed
+qed
+
+theorem grants_finite:
+  assumes strat: "stratified \<Gamma> \<sigma>" and sf: "safe \<Gamma>" and fin: "finite D"
+  shows "finite {ob. grants \<Gamma> D \<sigma> k s ob}"
+proof -
+  have "{ob. grants \<Gamma> D \<sigma> k s ob} \<subseteq> adom D"
+  proof
+    fix ob assume "ob \<in> {ob. grants \<Gamma> D \<sigma> k s ob}"
+    then have "(k, s, ob) \<in> strata \<Gamma> D \<sigma> (\<sigma> k)" by (simp add: grants_def)
+    then obtain T p s' ob' c I where eq: "(k, s, ob) = ((T, p), s', ob')"
+        and pc: "perms \<Gamma> T p = Some c" and st: "sat \<Gamma> D I T c s' ob'"
+      using strata_origin[OF strat] by blast
+    from sf pc have "generative c" unfolding safe_def by blast
+    from generative_sat_adom[OF this st] eq show "ob \<in> adom D" by auto
+  qed
+  with adom_finite[OF fin] show ?thesis
+    using finite_subset by blast
+qed
+
 end

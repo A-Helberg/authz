@@ -11,10 +11,10 @@ text \<open>
   Each obligation carries its proof plan as a comment.
 \<close>
 
-section \<open>The active domain and derivation fuel\<close>
+section \<open>Derivation fuel\<close>
 
-definition adom :: "db \<Rightarrow> eid set" where
-  "adom D = (fst ` D) \<union> {y. \<exists>x a. (x, a, Ent y) \<in> D}"
+text \<open>\<open>adom\<close> lives in the checked session now (it carries
+  \<open>grants_finite\<close>, discharged and moved to \<open>Authz_Semantics\<close>).\<close>
 
 definition fuel_bound :: "reg \<Rightarrow> db \<Rightarrow> nat" where
   "fuel_bound \<Gamma> D = card (rkeys \<Gamma>) * card (adom D) + 1"
@@ -92,15 +92,10 @@ definition enum_spec :: "reg \<Rightarrow> db \<Rightarrow> (key \<Rightarrow> n
   "enum_spec \<Gamma> D \<sigma> k s xs \<longleftrightarrow>
      distinct xs \<and> set xs = {ob. grants \<Gamma> D \<sigma> k s ob}"
 
-text \<open>Precondition for E1's finiteness -- the semantic content of safety
-  (groundedness). Proof plan: by induction over strata, every granted
-  object of a generative check occurs in the extension of one of its
-  generative relations, so the answer set injects into \<open>adom D\<close>.\<close>
-
-theorem grants_finite:
-  assumes "stratified \<Gamma> \<sigma>" "safe \<Gamma>" "finite D"
-  shows "finite {ob. grants \<Gamma> D \<sigma> k s ob}"
-  sorry
+text \<open>E1's finiteness precondition -- \<open>grants_finite\<close> -- is DISCHARGED:
+  see \<open>Authz_Semantics\<close> in the checked session (via
+  \<open>generative_sat_adom\<close> and \<open>strata_origin\<close>, both of which are also
+  useful stepping stones for the walker proofs below).\<close>
 
 section \<open>Stratification-independence\<close>
 

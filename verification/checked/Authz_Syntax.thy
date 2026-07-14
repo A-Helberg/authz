@@ -91,4 +91,31 @@ fun generative :: "check \<Rightarrow> bool" where
 definition safe :: "reg \<Rightarrow> bool" where
   "safe \<Gamma> \<longleftrightarrow> (\<forall>T p c. perms \<Gamma> T p = Some c \<longrightarrow> generative c)"
 
+text \<open>The active domain: every eid a datom mentions. Safety will confine
+  answer sets to it (SEMANTICS section 2's domain-independence).\<close>
+
+definition adom :: "db \<Rightarrow> eid set" where
+  "adom D = (fst ` D) \<union> {y. \<exists>x a. (x, a, Ent y) \<in> D}"
+
+lemma ext_fst_adom: "(x, y) \<in> ext D r \<Longrightarrow> x \<in> adom D"
+  by (cases r) (force simp: ext_def adom_def)+
+
+lemma adom_finite:
+  assumes "finite D"
+  shows "finite (adom D)"
+proof -
+  let ?f = "\<lambda>d. case snd (snd d) of Ent y \<Rightarrow> y | Lit l \<Rightarrow> 0"
+  have "{y. \<exists>x a. (x, a, Ent y) \<in> D} \<subseteq> ?f ` D"
+  proof
+    fix y assume "y \<in> {y. \<exists>x a. (x, a, Ent y) \<in> D}"
+    then obtain x a where mem: "(x, a, Ent y) \<in> D" by blast
+    have "?f (x, a, Ent y) = y" by simp
+    with mem show "y \<in> ?f ` D" by force
+  qed
+  then have "finite {y. \<exists>x a. (x, a, Ent y) \<in> D}"
+    using finite_imageI[OF assms] finite_subset by blast
+  then show ?thesis
+    unfolding adom_def using assms by simp
+qed
+
 end

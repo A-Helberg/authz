@@ -31,14 +31,21 @@ Two sessions, one hard rule:
   are complete at its own stratum),
   `terminal_grants` (sanity: a bare-terminal permission denotes exactly
   its relation extension).
+- **Safety implies finiteness** (`grants_finite`, formerly Obligation
+  E's precondition): for a safe (grounded) registry over a finite
+  database, every answer set is finite — it lives inside the active
+  domain (`generative_sat_adom` + `strata_origin` + `adom_finite`).
+  This is the proven semantic content of the groundedness validator.
 
 ## What is stated but open (session `Authz_Obligations`)
 
 - **W** `walker_sound` / `walker_complete` — the visited-set walker
   computes `grants` (underwrites `can?`, `explain`, the reference
-  interpreter).
-- **E** `enum_spec` + `grants_finite` — the enumeration contract and the
-  finiteness that safety buys.
+  interpreter). Note the two directions are mutually recursive through
+  negation — `walk (CNot c)` sound needs `walk c` *complete* one
+  stratum down — so the real induction is simultaneous, over strata.
+- **E** `enum_spec` — the enumeration contract (its finiteness
+  precondition is discharged, see above).
 - `sigma_independent` — the semantics does not depend on the choice of
   stratification.
 
