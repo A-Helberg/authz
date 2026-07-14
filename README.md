@@ -392,6 +392,8 @@ Point checks are batched per (type, permission) pair, and
 ```
 SEMANTICS.md            the specification: stratified LFP semantics of the check language
 verification/           Isabelle/HOL mechanization (mise run verify); see its README
+verification/export/    the verified kernel as a Scala jar (mise run kernel:build),
+                        cross-checked from test/authz/kernel_test.clj
 src/authz/schema.clj    registry validation + compilation to Datalog
 src/authz/core.clj      can? / explain / filter-authorized / list-query(-attrs) / grants(-page)
 src/authz/attrs.clj     attribute allow layer: readable-datoms / check-tx

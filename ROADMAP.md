@@ -97,21 +97,22 @@ path gets that consistency for free. The offline path re-opens the problem
   stability, and a grounding sanity theorem. `mise run verify`
   re-checks the proofs.
 
-## Next
-
-- **Executable refinement of the spec, exported to Scala** for a
-  runtime-checkable kernel: the bounded-iteration evaluator + proof it
-  equals the lfp, then `export_code` and a thin Clojure shim. All proof
-  obligations from SEMANTICS.md are otherwise **discharged and
-  machine-checked** in the single sorry-free session under
-  `verification/` — well-definedness, finiteness-from-safety, the
-  characterization theorem, the Kleene/rank tower, Obligation W
-  (`walker_sound` + `walker_complete`; en route the naive fuel-free
-  soundness statement was found to be false — fuel death under
-  negation), Obligation E (generation completeness, exactness of the
-  pure-closure fast path — retiring the code-comment argument in
-  `authz.core` — and the verified-filter capstones), and
+- **The verified kernel, exported to Scala and cross-checked from
+  Clojure** — the full Cedar-style pipeline, closed: an executable
+  bottom-up evaluator (early-exit fixpoint iteration proven equal to the
+  lfp via chain stabilization in a finite fact space; executable
+  stratified/safe checkers proven equivalent to the spec predicates, so
+  bad input gets None, never a wrong answer) with `kernel_correct`
+  machine-checked, `export_code`d as a Scala module, compiled to
+  `verification/export/authz-kernel.jar` (`mise run kernel:build`), and
+  cross-checked against `can?` from `test/authz/kernel_test.clj` in the
+  regular suite. All proof obligations from SEMANTICS.md are
+  **discharged and machine-checked** in the single sorry-free session:
+  well-definedness, finiteness-from-safety, the characterization
+  theorem, the Kleene/rank tower, Obligation W, Obligation E, and
   stratification-independence.
+
+## Next
 - **Random registries in the generative suite.** Worlds are generated;
   the registry is still the fixed fixture. Schema-space is where
   compilation bugs live (collision vars, SCC shapes, mutual recursion,

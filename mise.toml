@@ -23,6 +23,20 @@ ISABELLE=$(command -v isabelle || echo /Applications/Isabelle2025-2.app/bin/isab
 "$ISABELLE" build -v -D verification
 """
 
+[tasks."kernel:build"]
+description = "Re-export the verified kernel from Isabelle and compile verification/export/authz-kernel.jar"
+run = """
+set -e
+ISABELLE=$(command -v isabelle || echo /Applications/Isabelle2025-2.app/bin/isabelle)
+"$ISABELLE" build -D verification
+EXPORT_TMP=$(mktemp -d)
+"$ISABELLE" export -d verification -x '*:code/**' -O "$EXPORT_TMP" Authz
+cp "$EXPORT_TMP"/Authz.Authz_Export/code/export1.scala verification/export/AuthzKernel.scala
+"$ISABELLE" scalac -d verification/export/authz-kernel.jar verification/export/AuthzKernel.scala
+rm -rf "$EXPORT_TMP"
+echo "built verification/export/authz-kernel.jar"
+"""
+
 [tasks.docs]
 description = "The docs site, ready to browse: snippet results + css, then watch on :2080"
 dir = "docs"

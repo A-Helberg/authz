@@ -15,7 +15,12 @@
    :extra-deps  {io.github.cognitect-labs/test-runner
                  {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                  criterium/criterium {:mvn/version "0.4.6"}
-                 org.slf4j/slf4j-nop {:mvn/version "2.0.13"}}
+                 org.slf4j/slf4j-nop {:mvn/version "2.0.13"}
+                 ;; the verified kernel exported from Isabelle (see
+                 ;; verification/checked/Authz_Export.thy and mise run
+                 ;; kernel:build) and the Scala runtime it needs
+                 authz/verified-kernel {:local/root "verification/export/authz-kernel.jar"}
+                 org.scala-lang/scala3-library_3 {:mvn/version "3.3.4"}}
    :main-opts   ["-m" "cognitect.test-runner"]
    :exec-fn     cognitect.test-runner.api/test}
 

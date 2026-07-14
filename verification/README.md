@@ -54,6 +54,24 @@ retired — recreate it if new obligations arise.)
   any two stratifications yield the same `grants`; the semantics is a
   property of the registry, not of the stratum assignment the compiler
   happens to compute.
+- **The verified kernel** (`Authz_Kernel` + `Authz_Export`): an
+  executable bottom-up evaluator over concrete lists — a machine-checked
+  twin of the Clojure fixpoint oracle — with `kernel_correct`: whenever
+  it answers `Some b`, `b` *is* the spec's `grants`, and
+  `kernel_defined`: it answers exactly when its inputs pass the
+  executable `stratified`/`safe` checkers (proven equivalent to the spec
+  predicates), returning `None` otherwise. Supporting results: subject
+  confinement (safety confines subjects to the active domain, bounding
+  the search space), `kstep = stepF` under confinement, and
+  `fixloop`/`chain_stabilize` (early-exit iteration inside a finite fact
+  space reaches the least fixed point and equals the worst-case funpow
+  the proofs reason about). `Authz_Export` emits it as a Scala module
+  (`mise run kernel:build` → `export/authz-kernel.jar`);
+  `test/authz/kernel_test.clj` marshals real registries and Datomic
+  datoms into the model and cross-checks the kernel against `can?` —
+  a verified referee on the JVM. It recomputes its fixpoint tower per
+  query, so treat it as a reference checker for scoped worlds and
+  spot-checks, not a production evaluator.
 
 ## Building
 

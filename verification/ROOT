@@ -16,6 +16,8 @@ session Authz in "checked" = HOL +
     walker soundness + completeness (Obligation W), enumeration
     exactness (Obligation E), and stratification-independence.
     No sorries."
+  sessions
+    "HOL-Library"
   theories
     Authz_Syntax
     Authz_Semantics
@@ -23,3 +25,5 @@ session Authz in "checked" = HOL +
     Authz_Walker
     Authz_Enum
     Authz_Sigma
+    Authz_Kernel
+    Authz_Export
