@@ -112,12 +112,17 @@ path gets that consistency for free. The offline path re-opens the problem
   theorem, the Kleene/rank tower, Obligation W, Obligation E, and
   stratification-independence.
 
+- **Random registries in the generative suite.** Seeded random
+  permission schemas (registrygen.clj: valid by construction without
+  narrowing the space — cross-type chains, self-recursion with base
+  cases, negated terminals/conditions/chains, and/attr= mixing,
+  same-type collision via a reverse-relation user permission) plus
+  random worlds over them; every strategy must agree with both oracles
+  on every triple (generative_registry_test.clj). Remaining refinement:
+  test.check generators for shrinking, and mutual (cross-permission)
+  recursion shapes.
+
 ## Next
-- **Random registries in the generative suite.** Worlds are generated;
-  the registry is still the fixed fixture. Schema-space is where
-  compilation bugs live (collision vars, SCC shapes, mutual recursion,
-  not-under-and). Generate small random valid registries + worlds,
-  ideally via test.check for shrinking.
 
 - **Named rules for non-recursive permissions too.** Recursion forced the
   rule machinery into existence; emitting rules for *all* permissions

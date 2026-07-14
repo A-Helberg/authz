@@ -373,16 +373,18 @@ Point checks are batched per (type, permission) pair, and
   the ~10-line index adapter and emission order — is what the
   differential suite pins in CI. See `verification/README.md` for the
   exact claims boundary.
-- Correctness is defended four ways: an exhaustive fixture with
+- Correctness is defended five ways: an exhaustive fixture with
   hand-computed grant sets; a black-box functional suite
   (`functional_test.clj`) that exercises only the public API against its own
   self-contained domain — registry and world in, behavior out;
-  generative differential tests — seeded random worlds where every
-  strategy (compiled Datalog, the point-check walker, and the `grants`
-  enumeration) must agree with two independent oracles (the top-down
-  reference interpreter and the bottom-up fixpoint spec) on every
-  (subject, permission, object) triple; and the machine-checked
-  semantics above (`mise run verify`). CI runs all
+  generative differential tests over random *worlds* AND random
+  *registries* (`registrygen.clj` — schema-space is where compilation
+  bugs live), where every strategy (compiled Datalog, the point-check
+  walker, and the `grants` enumeration) must agree with two independent
+  oracles (the top-down reference interpreter and the bottom-up fixpoint
+  spec) on every (subject, permission, object) triple; the
+  machine-checked semantics above (`mise run verify`); and the verified
+  kernel on the classpath, cross-checked live in the suite. CI runs all
   of it on GitHub
   Actions (`.github/workflows/ci.yml`), including a smoke test of the
   benchmark harness (each scenario executed once, no criterium timing).
