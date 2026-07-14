@@ -81,7 +81,39 @@ path gets that consistency for free. The offline path re-opens the problem
   generative differential suite holds `grants` to reproducing the full
   `list-query` result set on every random world.
 
+- **The semantics as a specification, with two oracles and a
+  mechanization** (Cedar-style verification-guided development):
+  SEMANTICS.md defines the check language as stratified
+  least-fixed-point semantics — every implicit decision (terminal
+  unification, fresh chain variables, sticky negative polarity, safety
+  as range-restriction, types as schema-level) written down. Two
+  independent oracles hold every strategy to it: the existing top-down
+  reference interpreter and a new bottom-up fixpoint evaluator
+  (`fixpoint_oracle.clj`) that implements the spec literally — different
+  strategy, shared blind spots eliminated. The Isabelle/HOL sessions
+  under `verification/` mechanize the semantics; machine-checked so far:
+  satisfaction invariance and monotonicity, per-stratum operator
+  monotonicity (so the least fixed points exist), strata growth and
+  stability, and a grounding sanity theorem. `mise run verify`
+  re-checks the proofs.
+
 ## Next
+
+- **Discharge the open proof obligations**
+  (`verification/obligations/`, each stated with a proof plan):
+  walker soundness + completeness (the visited-set lemma — underwrites
+  `can?`, `explain`, the reference interpreter, and `grants`
+  verification), enumeration exactness (model the gen-graph traversal;
+  subsumes the pure-closure exactness argument that currently lives in
+  a code comment), finiteness from safety, and
+  stratification-independence. Then: an executable refinement of the
+  spec exported to Scala for a runtime-checkable kernel (the
+  bounded-iteration evaluator + proof it equals the lfp).
+- **Random registries in the generative suite.** Worlds are generated;
+  the registry is still the fixed fixture. Schema-space is where
+  compilation bugs live (collision vars, SCC shapes, mutual recursion,
+  not-under-and). Generate small random valid registries + worlds,
+  ideally via test.check for shrinking.
 
 - **Named rules for non-recursive permissions too.** Recursion forced the
   rule machinery into existence; emitting rules for *all* permissions

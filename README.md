@@ -353,14 +353,30 @@ Point checks are batched per (type, permission) pair, and
 - Subject types are inferred from terminals at compile time and checked
   loudly at call time, so `(can? .. :site ..)` with the wrong subject type
   throws instead of silently returning false.
-- Correctness is defended three ways: an exhaustive fixture with
+- The semantics is a specification, not folklore: [SEMANTICS.md](SEMANTICS.md)
+  defines the check language as stratified least-fixed-point (Datalog)
+  semantics, and every evaluation strategy in the library is *held to*
+  it. The bottom-up fixpoint evaluator in
+  `test/authz/fixpoint_oracle.clj` implements that document directly and
+  serves as the executable spec; the Isabelle/HOL formalization under
+  [`verification/`](verification/) mechanizes it. Precisely stated: the
+  semantics' well-definedness (operator monotonicity, existence and
+  stability of the per-stratum least fixed points) is machine-checked;
+  walker correctness and enumeration exactness are formally *stated*
+  with proof plans and currently rest on the differential suite; the
+  Datalog-compilation path rests on the differential suite permanently
+  (its consumer is Datomic's query engine). See
+  `verification/README.md` for the exact claims boundary.
+- Correctness is defended four ways: an exhaustive fixture with
   hand-computed grant sets; a black-box functional suite
   (`functional_test.clj`) that exercises only the public API against its own
-  self-contained domain — registry and world in, behavior out; and
+  self-contained domain — registry and world in, behavior out;
   generative differential tests — seeded random worlds where every
   strategy (compiled Datalog, the point-check walker, and the `grants`
-  enumeration) must agree with a naive graph-walking reference
-  interpreter on every (subject, permission, object) triple. CI runs all
+  enumeration) must agree with two independent oracles (the top-down
+  reference interpreter and the bottom-up fixpoint spec) on every
+  (subject, permission, object) triple; and the machine-checked
+  semantics above (`mise run verify`). CI runs all
   of it on GitHub
   Actions (`.github/workflows/ci.yml`), including a smoke test of the
   benchmark harness (each scenario executed once, no criterium timing).
@@ -368,6 +384,8 @@ Point checks are batched per (type, permission) pair, and
 ## Layout
 
 ```
+SEMANTICS.md            the specification: stratified LFP semantics of the check language
+verification/           Isabelle/HOL mechanization (mise run verify); see its README
 src/authz/schema.clj    registry validation + compilation to Datalog
 src/authz/core.clj      can? / explain / filter-authorized / list-query(-attrs) / grants(-page)
 src/authz/attrs.clj     attribute allow layer: readable-datoms / check-tx
@@ -375,7 +393,8 @@ src/authz/cache.clj     basis-t keyed (sound) point-check cache
 test/authz/fixture.clj  shared domain world (hierarchy, managers, content)
 test/authz/*_test.clj   hygiene, compilation shape, semantics, offline flows
 test/authz/functional_test.clj  black-box suite over the public API only
-test/authz/reference.clj + worldgen.clj + generative_test.clj  differential oracle
+test/authz/fixpoint_oracle.clj  the executable spec (bottom-up stratified LFP)
+test/authz/reference.clj + worldgen.clj + generative_test.clj  differential harness
 test/authz/bench_test.clj  benchmark-harness smoke test (runs in CI)
 bench/authz/bench.clj   criterium benchmarks (mise run bench)
 ```

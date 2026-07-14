@@ -16,6 +16,13 @@ run = "clojure -A:repl"
 description = "Run criterium benchmarks over a large generated world"
 run = "clojure -X:bench"
 
+[tasks.verify]
+description = "Machine-check the Isabelle formalization of SEMANTICS.md (verification/)"
+run = """
+ISABELLE=$(command -v isabelle || echo /Applications/Isabelle2025-2.app/bin/isabelle)
+"$ISABELLE" build -v -D verification
+"""
+
 [tasks.docs]
 description = "The docs site, ready to browse: snippet results + css, then watch on :2080"
 dir = "docs"

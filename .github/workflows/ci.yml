@@ -40,3 +40,33 @@ jobs:
         run: mise run docs:gen
       - name: Docs — smoke-test every page
         run: mise run docs:test
+
+  # Machine-check the Isabelle formalization of SEMANTICS.md. The claims
+  # boundary lives in verification/README.md: session Authz must contain
+  # no sorries; session Authz_Obligations holds stated-but-open theorems.
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Isabelle distribution and heap images
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/isabelle-dist
+            ~/.isabelle
+          key: isabelle-2025-2-${{ hashFiles('verification/**') }}
+          restore-keys: isabelle-2025-2-
+
+      - name: Install Isabelle
+        run: |
+          if [ ! -x ~/isabelle-dist/Isabelle2025-2/bin/isabelle ]; then
+            mkdir -p ~/isabelle-dist
+            curl -fsSL https://isabelle.in.tum.de/dist/Isabelle2025-2_linux.tar.gz \
+              | tar -xz -C ~/isabelle-dist
+          fi
+          echo "$HOME/isabelle-dist/Isabelle2025-2/bin" >> "$GITHUB_PATH"
+
+      - name: Check proofs
+        run: isabelle build -v -D verification

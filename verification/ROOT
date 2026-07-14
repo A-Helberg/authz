@@ -1,0 +1,22 @@
+(* Two sessions with a hard claims boundary:
+
+   Authz             — machine-checked, no sorry. What the README may
+                       call "proven" lives here and only here.
+   Authz_Obligations — stated theorems awaiting proof (quick_and_dirty).
+                       Never cite these as proven.                      *)
+
+session Authz in "checked" = HOL +
+  description "Stratified least-fixed-point semantics of the authz check
+    language (SEMANTICS.md sections 1-3), with monotonicity,
+    well-definedness and stability theorems. No sorries."
+  theories
+    Authz_Syntax
+    Authz_Semantics
+
+session Authz_Obligations in "obligations" = Authz +
+  description "Open proof obligations from SEMANTICS.md section 5:
+    walker correctness (W), enumeration exactness (E), finiteness from
+    safety, stratification-independence. Statements only."
+  options [quick_and_dirty]
+  theories
+    Authz_Obligations
