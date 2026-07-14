@@ -252,15 +252,19 @@ executable spec regardless.
   `Γ` is well-formed (grammar side conditions), safe, and stratified —
   i.e. the assumptions of §3 hold. *(This turns the compile-time
   validators from lint into load-bearing precondition-establishers.)*
-- **W (walker correct).** For accepted `Γ`:
-  `walk-check(T, body, s, o, ∅) = grants(T, p, s, o)`. The interesting
-  half is that cutting a revisited `[type perm eid]` state to `false` is
-  complete: any fact in `I_N` has a derivation tree of finite height,
-  and a minimal-height derivation never revisits a state on its own
-  path; soundness is the converse induction. Termination on cyclic data
-  is the same well-foundedness. *(This one theorem underwrites `can?`,
-  `explain`, the reference interpreter, and the verification mode of
-  `grants`.)*
+- **W (walker correct) — DISCHARGED** (`verification/checked/Authz_Walker.thy`):
+  for accepted `Γ`, `walk-check(T, body, s, o, ∅) = grants(T, p, s, o)`.
+  Mechanization notes: soundness and completeness are mutually
+  recursive through negation and are proven simultaneously by one
+  well-founded induction on (fuel, check size); the completeness
+  invariant shows a visited state a minimal derivation needs can never
+  be blocked; and in the fuel-indexed model *soundness also requires
+  sufficient fuel* — fuel death inside a negation flips `false` to
+  `true` (the Clojure walker is fuel-free with intrinsic termination,
+  so the caveat is a model artifact, but it is why the naive fuel-free
+  soundness statement is unprovable). *(This theorem underwrites
+  `can?`, `explain`, the reference interpreter, and the verification
+  mode of `grants`.)*
 - **E (enumeration exact).** For accepted `Γ`: E1–E3 above. Split as:
   completeness of candidate generation (`gen-positions` covers, for
   every fact, at least one derivation — including the "`And` generates

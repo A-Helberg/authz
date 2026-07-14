@@ -99,16 +99,19 @@ path gets that consistency for free. The offline path re-opens the problem
 
 ## Next
 
-- **Discharge the open proof obligations**
+- **Discharge the remaining proof obligations**
   (`verification/obligations/`, each stated with a proof plan):
-  walker soundness + completeness (the visited-set lemma — underwrites
-  `can?`, `explain`, the reference interpreter, and `grants`
-  verification; note the two directions are mutually recursive through
-  negation, so the induction is simultaneous over strata), enumeration
-  exactness (model the gen-graph traversal; subsumes the pure-closure
-  exactness argument that currently lives in a code comment), and
-  stratification-independence. Finiteness-from-safety is **done**
-  (`grants_finite`, machine-checked in the checked session). Then: an
+  enumeration exactness (model the gen-graph traversal; subsumes the
+  pure-closure exactness argument that currently lives in a code
+  comment; its finiteness precondition and walker component are already
+  checked) and stratification-independence. **Done and machine-checked**
+  in the checked session: finiteness-from-safety (`grants_finite`), the
+  characterization theorem (`grants_iff_sat`), the Kleene/rank tower
+  (`Authz_Kleene`), and Obligation W in full — `walker_sound` +
+  `walker_complete` (`Authz_Walker`), proven by a single well-founded
+  induction on (fuel, check size) with the blocking-is-impossible
+  visited-set invariant; en route the naive fuel-free soundness
+  statement was found to be false (fuel death under negation). Then: an
   executable refinement of the spec exported to Scala for a
   runtime-checkable kernel (the bounded-iteration evaluator + proof it
   equals the lfp).

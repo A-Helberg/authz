@@ -361,9 +361,12 @@ Point checks are batched per (type, permission) pair, and
   serves as the executable spec; the Isabelle/HOL formalization under
   [`verification/`](verification/) mechanizes it. Precisely stated: the
   semantics' well-definedness (operator monotonicity, existence and
-  stability of the per-stratum least fixed points) is machine-checked;
-  walker correctness and enumeration exactness are formally *stated*
-  with proof plans and currently rest on the differential suite; the
+  stability of the per-stratum least fixed points), finiteness from
+  groundedness, the characterization theorem, and **walker correctness
+  in full** (soundness and completeness of the visited-set walker that
+  powers `can?`/`explain`, and the verification mode of `grants`) are
+  machine-checked; enumeration exactness is formally *stated* with a
+  proof plan and currently rests on the differential suite; the
   Datalog-compilation path rests on the differential suite permanently
   (its consumer is Datomic's query engine). See
   `verification/README.md` for the exact claims boundary.
