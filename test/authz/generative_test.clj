@@ -1,8 +1,9 @@
 (ns authz.generative-test
-  "Differential testing: for seeded random worlds, the compiled Datalog
-  (can?, filter-authorized, list-query) must agree with a naive
-  graph-walking reference interpreter on every (subject, permission,
-  object) triple."
+  "Differential testing: for seeded random worlds, every consumption
+  strategy (can?, filter-authorized, list-query, grants) must agree with a
+  naive graph-walking reference interpreter on every (subject, permission,
+  object) triple — and grants, being an enumeration, must reproduce the
+  full list-query result set exactly."
   (:require [authz.core :as authz]
             [authz.fixture :as fx]
             [authz.reference :as ref]
@@ -69,10 +70,15 @@
               via-ref (into #{} (filter #(ref/check fx/compiled db type perm subject %)) eids)
               via-can (into #{} (filter #(authz/can? fx/compiled db :user subject perm type %)) eids)
               via-batch (authz/filter-authorized fx/compiled db :user subject perm type eids)
-              via-list (set/intersection (list-eids db type perm subject) (set eids))]
+              via-list-full (list-eids db type perm subject)
+              via-list (set/intersection via-list-full (set eids))
+              via-grants (set (authz/grants fx/compiled db :user subject perm type))]
           (is (= via-ref via-can)
               (str "seed " seed " " [type perm] " subject " subject ": reference vs can?"))
           (is (= via-ref via-batch)
               (str "seed " seed " " [type perm] " subject " subject ": reference vs filter-authorized"))
           (is (= via-ref via-list)
-              (str "seed " seed " " [type perm] " subject " subject ": reference vs list-query")))))))
+              (str "seed " seed " " [type perm] " subject " subject ": reference vs list-query"))
+          (is (= via-list-full via-grants)
+              (str "seed " seed " " [type perm] " subject " subject
+                   ": grants must reproduce the full list-query result set")))))))

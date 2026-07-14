@@ -1,15 +1,22 @@
 (ns authz.core
-  "The three consumption APIs over a compiled authz schema:
+  "The consumption APIs over a compiled authz schema — three composable
+  primitives, each a different artifact so the consumer always owns the
+  query:
 
-    can?              point check (write-path guards, single reads)
-    list-query        :where clauses to splice into list queries
-    list-query-attrs  transitive attribute watch-set for reactive invalidation
+    can?              predicate — point check (write-path guards, single
+                      reads, filtering a walk of your own index)
+    list-query        clauses — :where clauses to splice into list queries
+    grants            source — lazy, deduplicated enumeration of the
+                      objects a subject holds a permission over
 
-  plus `filter-authorized`, a batched point check (one query for many
-  entities) used heavily by the attribute layer.
+  plus helpers built on them: `explain` (the why), `filter-authorized`
+  (batched point check — one query for many entities, used heavily by the
+  attribute layer), `grants-page` (cursor pagination over `grants`) and
+  `list-query-attrs` (transitive attribute watch-set for reactive
+  invalidation).
 
   All compilation happened in `authz.schema/compile-schema`; everything here
-  is a lookup plus (for the checks) a single Datomic query against the
+  is a lookup plus index traversal or a single Datomic query against the
   caller's `db` snapshot."
   (:require [authz.schema :as schema]
             [clojure.walk :as walk]
@@ -267,3 +274,240 @@
                     :in ['$ subject-var [object-var '...]]
                     :where clauses}
                    db subject-eid (vec object-eids)))))))
+
+;; ---------------------------------------------------------------------------
+;; grants: the enumeration ("source") primitive
+;;
+;; can? answers one (subject, object) pair; list-query lets the DB filter a
+;; query — but Datalog materializes its full result set, so neither can hand
+;; a UI page 3 of a 500k-row authorized set. `grants` enumerates instead:
+;; the permission graph is traversed outward from the subject over the same
+;; indexes the point-check walker uses, lazily, so nothing is built ahead of
+;; consumption.
+;;
+;; Mechanism: `gen-graph` statically extracts the permission's *generating
+;; dependency closure* — which terminals seed candidate objects for which
+;; [type perm] key, and which chains derive one key's candidates from
+;; another's (a candidate account derives the products related to it, and
+;; so on up to the queried type). `gen-stream` then runs a deterministic
+;; depth-first traversal over that graph with request-local dedupe.
+;; Recursive permissions need no special handling — their cycle is just an
+;; edge back into the same key, cut by the dedupe — so recursive closures
+;; enumerate without being materialized. Candidates are exact when the
+;; closure is built only from relations, chains and ors; when any
+;; (and ...), (not ...) or (attr= ...) participates, generation
+;; over-approximates from each conjunction's first generative conjunct and
+;; every emitted candidate is verified by the point-check walker.
+
+(defn- rel-sources
+  "The entities on the from-side of relation `rel` whose target is `to-eid`
+  — the inverse of the walker's traversal direction. Lazy, in index order
+  (:vaet for forward relations, :eavt for reverse ones), so iteration order
+  is deterministic for a given db basis."
+  [db rel to-eid]
+  (if (schema/reverse-relation? rel)
+    (map :v (datoms* db :eavt to-eid (schema/underlying-attr rel)))
+    (map :e (datoms* db :vaet to-eid rel))))
+
+(defn- generative?
+  "Can this node produce candidate objects? Mirrors the compile-time
+  groundedness rules: conditions and exclusions never generate."
+  [node]
+  (case (:op node)
+    (:relation :chain) true
+    (:attr= :not) false
+    :and (boolean (some generative? (:branches node)))
+    :or (every? generative? (:branches node))))
+
+(defn- gen-positions
+  "The :relation and :chain nodes of a check tree that generate candidates.
+  Nothing under (not ...) generates; (and ...) generates from its first
+  generative conjunct only — a complete superset, since a conjunction's
+  result is a subset of any single conjunct's (the remaining conjuncts are
+  enforced by per-candidate verification). Compile-time groundedness
+  guarantees the generative conjunct exists."
+  [node]
+  (case (:op node)
+    (:relation :chain) [node]
+    (:attr= :not) []
+    :or (mapcat gen-positions (:branches node))
+    :and (gen-positions (first (filter generative? (:branches node))))))
+
+(defn- node-ops
+  "All ops appearing anywhere in a check tree."
+  [node]
+  (into #{}
+        (map :op)
+        (tree-seq #(contains? #{:or :and :not} (:op %))
+                  #(or (:branches %) [(:branch %)])
+                  node)))
+
+(defn- gen-graph
+  "Static analysis of the generating dependency closure for `root`
+  ([object-type permission]):
+
+    :seeds     [{:key [t p] :relation rel} ...] in deterministic discovery
+               order — each terminal seeds candidates for its key directly
+               from the subject
+    :consumers {[t p] -> [{:key [t' p'] :relation rel} ...]} — chains: a
+               candidate for [t p] derives candidates for [t' p'], one
+               relation hop away
+    :verify?   true when any (and ...), (not ...) or (attr= ...) appears in
+               the closure — generation then over-approximates and emitted
+               candidates must pass the point-check walker"
+  [schema root]
+  (loop [todo (conj clojure.lang.PersistentQueue/EMPTY root)
+         visited #{}
+         seeds []
+         consumers {}
+         verify? false]
+    (if-let [[t p :as k] (peek todo)]
+      (if (contains? visited k)
+        (recur (pop todo) visited seeds consumers verify?)
+        (let [node (get-in schema [:types t :permissions p])
+              positions (gen-positions node)
+              chains (filterv #(= :chain (:op %)) positions)
+              chain-keys (mapv (fn [ch]
+                                 [(get-in schema [:types t :relations (:relation ch)])
+                                  (:permission ch)])
+                               chains)]
+          (recur (into (pop todo) chain-keys)
+                 (conj visited k)
+                 (into seeds
+                       (keep #(when (= :relation (:op %))
+                                {:key k :relation (:relation %)}))
+                       positions)
+                 (reduce (fn [m [ch ck]]
+                           (let [entry {:key k :relation (:relation ch)}]
+                             (if (some #{entry} (get m ck))
+                               m
+                               (update m ck (fnil conj []) entry))))
+                         consumers
+                         (map vector chains chain-keys))
+                 (or verify?
+                     (boolean (some #{:and :not :attr=} (node-ops node)))))))
+      {:seeds seeds :consumers consumers :verify? verify?})))
+
+(defn- gen-stream
+  "Deterministic depth-first traversal of the generating dependency graph,
+  outward from the subject, with request-local dedupe per [type perm] key.
+  Lazily yields candidate eids of `root` in discovery order. The dedupe
+  sets grow with states visited — that is the price of correct enumeration
+  over parallel paths and cycles — but the result set itself is never built
+  ahead of consumption."
+  [db {:keys [seeds consumers]} root subject-eid]
+  (letfn [(derived [k eid]
+            (map (fn [{ck :key rel :relation}]
+                   {:key ck :xs (rel-sources db rel eid)})
+                 (get consumers k)))
+          (step [stack seen]
+            (lazy-seq
+             (when-let [{:keys [key xs]} (first stack)]
+               (let [tail (rest stack)]
+                 (if-let [xs (seq xs)]
+                   (let [eid (first xs)
+                         cur {:key key :xs (rest xs)}]
+                     (if (contains? (get seen key) eid)
+                       (step (cons cur tail) seen)
+                       (let [seen (update seen key (fnil conj #{}) eid)
+                             ;; derived streams go on top (depth-first), in
+                             ;; node order, then the rest of this stream
+                             stack (into (cons cur tail) (reverse (derived key eid)))]
+                         (if (= key root)
+                           (cons eid (step stack seen))
+                           (step stack seen)))))
+                   (step tail seen))))))]
+    (step (map (fn [{:keys [key relation]}]
+                 {:key key :xs (rel-sources db relation subject-eid)})
+               seeds)
+          {})))
+
+(defn grants
+  "The enumeration primitive: a lazy, deduplicated stream of the object
+  eids over which `subject-eid` holds `permission` — the same shape as
+  `d/datoms`, for when the permission graph is the cheapest index you have
+  (brutal selectivity over huge sets). Produced by direct index traversal
+  outward from the subject; no Datalog query runs and nothing is
+  materialized ahead of consumption — recursive permissions enumerate
+  without materializing their closure.
+
+  Order is deterministic for a given (schema, db basis, subject,
+  permission, object type) — stable enough to resume against the same
+  basis (see `grants-page`) — but it is a traversal order, NOT a domain
+  sort order. When your sort order matters and selectivity is reasonable,
+  drive from your own index and filter with `can?` instead.
+
+  Composes like any seq: (take n ...) for a page, (filter pred ...) for
+  your own predicates, or feed batches into your own query through an :in
+  collection binding. Permissions involving (and ...), (not ...) or
+  (attr= ...) verify each candidate by the point-check walker before
+  emitting it. A subject identifier that resolves to nothing yields an
+  empty seq."
+  [schema db subject-type subject-eid permission object-type]
+  (let [entry (compiled-entry schema object-type permission)]
+    (check-subject-type! entry subject-type)
+    (let [subject-eid (d/entid db subject-eid)
+          root [object-type permission]
+          {:keys [verify?] :as graph} (gen-graph schema root)]
+      (if-not subject-eid
+        ()
+        (cond->> (gen-stream db graph root subject-eid)
+          verify? (filter (fn [eid]
+                            (some #(walk-check schema db object-type (:node %)
+                                               subject-eid eid #{})
+                                  (:branches entry)))))))))
+
+(defn grants-page
+  "One page of `grants` plus a plain-data cursor for the next:
+
+    {:data [eid ...]
+     :cursor {:authz/cursor true :basis-t t :subject <eid>
+              :permission <perm> :object-type <type> :eid <last>} | nil}
+
+  Pass the returned cursor back as :after for the next page; a nil cursor
+  means the enumeration is complete. Cursors are only meaningful against
+  the same db basis (traversal order is deterministic per basis, not
+  across bases): page against a stable value — hold the db, or use
+  (d/as-of db (:basis-t cursor)) — and this fn fails loudly on any
+  mismatch of basis, subject, permission or object type rather than
+  returning a silently wrong page. The cursor is transparent data and
+  contains eids; wrap or sign it at your trust boundary if it leaves your
+  system.
+
+  Resuming replays the traversal prefix, so cost grows with paging depth.
+  For \"previous page\", keep your per-page cursor history, as with any
+  cursor API."
+  ([schema db subject-type subject-eid permission object-type]
+   (grants-page schema db subject-type subject-eid permission object-type nil))
+  ([schema db subject-type subject-eid permission object-type
+    {:keys [limit after] :or {limit 100}}]
+   (when-not (and (integer? limit) (pos? limit))
+     (throw (ex-info "authz: :limit must be a positive integer"
+                     {:authz/error true :limit limit})))
+   (let [subject-eid* (d/entid db subject-eid)
+         basis (or (d/as-of-t db) (d/basis-t db))]
+     (when after
+       (let [expected {:basis-t basis :subject subject-eid*
+                       :permission permission :object-type object-type}]
+         (when-not (and (:authz/cursor after)
+                        (= expected (select-keys after (keys expected))))
+           (throw (ex-info (str "authz: cursor does not match this query — cursors are only "
+                                "valid for the same subject, permission, object type and db "
+                                "basis; page against (d/as-of db (:basis-t cursor)) or start "
+                                "from the first page")
+                           {:authz/error true :expected expected :cursor after})))))
+     (let [s (grants schema db subject-type subject-eid permission object-type)
+           s (if after
+               (rest (drop-while #(not= (:eid after) %) s))
+               s)
+           window (into [] (take (inc limit)) s)
+           more? (> (count window) limit)
+           data (if more? (subvec window 0 limit) window)]
+       {:data data
+        :cursor (when more?
+                  {:authz/cursor true
+                   :basis-t basis
+                   :subject subject-eid*
+                   :permission permission
+                   :object-type object-type
+                   :eid (peek data)})}))))

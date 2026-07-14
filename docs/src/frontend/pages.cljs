@@ -171,6 +171,30 @@
       [{:source    (rc/inline "tutorial/list_queries.clj")
         :component (result/view "tutorial/list_queries.clj")}]}
 
+     {:id    :grants
+      :title "Enumeration & paging"
+      :prose
+      [:<>
+       [:p "Datalog materializes its full result set, so " [:code "list-query"]
+        " cannot serve page 3 of a 500k-row authorized set without computing "
+        "all 500k. " [:code "grants"] " completes the primitive set — "
+        [:strong "predicate"] " (" [:code "can?"] "), "
+        [:strong "clauses"] " (" [:code "list-query"] "), "
+        [:strong "source"] " — as a lazy, deduplicated stream of authorized "
+        "eids, walked outward from the subject over Datomic's indexes. "
+        "Nothing is computed ahead of what you consume, even for recursive "
+        "permissions, and it composes like any seq."]
+       [:p "Its order is deterministic for a given db basis — that is what "
+        "makes the cursors in " [:code "grants-page"] " work — but it is a "
+        [:em "traversal"] " order, not a domain sort order. When your own "
+        "sort order matters, drive from your own index and filter with "
+        [:code "can?"] "; reach for " [:code "grants"] " when the permission "
+        "graph is the cheapest index you have. Cursors are transparent data, "
+        "validated fail-loud against basis, subject and permission."]]
+      :examples
+      [{:source    (rc/inline "tutorial/grants.clj")
+        :component (result/view "tutorial/grants.clj")}]}
+
      {:id    :watch-set
       :title "The watch-set"
       :prose

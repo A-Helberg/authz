@@ -19,13 +19,30 @@ See `authz-overview.md` for the conceptual background this reproduces.
 Tooling is managed with [mise](https://mise.jdx.dev):
 
 ```sh
-mise install     # java (temurin-21) + clojure
+mise install     # java (temurin-21) + clojure + bun/node (docs site)
 mise run test    # full test suite (in-memory Datomic, incl. generative tests)
 mise run bench   # criterium benchmarks over a large generated world
 mise run repl
 ```
 
 See `ROADMAP.md` for what's done and what's next.
+
+## Tutorial
+
+`docs/` is a guided tutorial site (built on
+[solidclj-docs](https://github.com/A-Helberg/solidclj)): every page shows a
+real snippet file next to the value it returned when evaluated against an
+in-memory Datomic — the displayed code and its result come from the same
+file, so the tutorial cannot drift from the library. A snippet that throws
+fails the docs build.
+
+```sh
+mise run docs        # everything: gen + css, then dev server on http://localhost:2080
+mise run docs:build  # full release build
+mise run docs:test   # render-smoke-test every page under happy-dom
+```
+
+(`docs:gen`, `docs:css` and `docs:watch` also exist as individual steps.)
 
 ## Defining a schema
 
@@ -87,6 +104,39 @@ Conditions and exclusions grant nothing by themselves — combine them under
            (-> :doc/organisation :edit))
 ```
 
+### Recursion
+
+Permissions may reference themselves through chains — the classic folder
+tree:
+
+```clojure
+:folder
+{:relations   {:folder/parent :folder
+               :folder/organisation :organisation}
+ :permissions {:view '(or (-> :folder/organisation :view)
+                          (-> :folder/parent :view))}}
+```
+
+Recursive permissions compile to named Datomic rules. Point checks
+(`can?`, `explain`) work unchanged and terminate even on cyclic *data*
+(A parent of B parent of A). For list queries, use `list-query*`, which
+returns `{:where [...] :rules [...]}` — put `%` in your `:in` and pass the
+rules:
+
+```clojure
+(let [{:keys [where rules]} (authz/list-query* schema :folder :view :user)]
+  (d/q {:find '[?folder] :in '[$ % ?user]
+        :where (into where my-clauses)}
+       db rules user-eid))
+```
+
+`list-query` fails loudly for recursive permissions (and `list-query*`
+works for every permission, with empty `:rules` when no recursion is
+involved). Two things are enforced at compile time: every recursive
+permission must be able to bottom out — some path must leave its cycle
+(mutual recursion sharing one base case is fine) — and recursion through
+`(not ...)` is rejected as non-stratified.
+
 Semantics that are load-bearing and covered by tests:
 
 - **Terminal = subject unification; chain first hop = fresh variable.**
@@ -103,27 +153,43 @@ Semantics that are load-bearing and covered by tests:
 
 `compile-schema` throws (ex-data has `:authz/schema-error`) on: unknown
 relations/permissions/types, malformed or empty (unquoted) check bodies,
-**cycles** in the permission DAG, ungrounded checks, terminals that unify
-the subject with more than one type, attributes claimed by two types, and
-invalid `:attrs` / `:create` / `:delete` declarations.
+recursion that can never bottom out, recursion through negation,
+ungrounded checks, terminals that unify the subject with more than one
+type, attributes claimed by two types, and invalid `:attrs` / `:create` /
+`:delete` declarations.
 
-## The three consumption APIs
+## The three primitives
+
+authz never owns your query — it hands you one of three composable
+artifacts, and you choose the driver:
 
 ```clojure
 (require '[authz.core :as authz])
 
-;; 1. Point check — write-path guards, single reads
+;; 1. Predicate — point check: write-path guards, single reads, or
+;;    filtering a lazy walk of your own index when YOUR sort order matters
 (authz/can? schema db :user user-eid :edit :organisation org-eid)
 
-;; 2. List query — splice into your own query so the DB filters for you
+;; 2. Clauses — splice into your own query so the DB filters for you
 (d/q {:find '[?assignment]
       :in   '[$ ?user]
       :where (into (authz/list-query schema :assignment :view :user)
                    '[[?assignment :assignment/organisation ?org] ...])}
      db user-eid)
 
-;; 3. Watch-set for reactive invalidation — re-run pushed queries when a
-;;    tx touches any of these attrs, so permission changes live-update
+;; 3. Source — lazy, deduplicated enumeration of authorized objects, the
+;;    same shape as d/datoms, for when the permission graph is the
+;;    cheapest index you have (huge sets, brutal selectivity). Composes
+;;    like any seq; nothing is materialized ahead of consumption, even
+;;    for recursive permissions.
+(take 20 (authz/grants schema db :user user-eid :view :assignment))
+```
+
+There is also a watch-set for reactive invalidation — re-run pushed
+queries when a tx touches any of these attrs, so permission changes
+live-update:
+
+```clojure
 (authz/list-query-attrs schema :assignment :view)
 ;;=> #{:assignment/member :site/members :manager/site ...}
 ```
@@ -134,16 +200,44 @@ Pass `{:object-var .. :subject-var ..}` to rename — required when object
 and subject types coincide (e.g. listing users a user may view), where the
 default names would collide.
 
-`can?` short-circuits: top-level `or` branches are pre-compiled separately
-and evaluated cheapest-first, so "is the assignee" answers without ever
-walking the hierarchy branches. `explain` uses the same machinery to answer
-*why*:
+`can?` is evaluated by direct index traversal (both endpoints are bound, so
+this beats a Datalog query ~10–40x): cost-ordered branches, short-circuiting
+on the first grant — "is the assignee" answers in ~1 µs without ever walking
+the hierarchy. List queries keep the compiled Datalog; the generative
+differential suite holds both strategies to identical answers. `explain`
+uses the same machinery to answer *why*:
 
 ```clojure
 (authz/explain schema db :user vic-eid :view :doc doc-eid)
 ;;=> {:granted? true :via (and :doc/viewers (attr= :doc/status :published) (not :doc/banned))}
 ;;   or {:granted? false :tried [<every branch evaluated>]}
 ```
+
+`grants` enumerates by direct index traversal outward from the subject —
+no Datalog query runs, so unlike `list-query` the full result set is never
+materialized: "page 3 of the 500k things this user may view" costs what it
+takes to walk there, not to compute all 500k. Its order is deterministic
+for a given db basis (that's what makes cursors work), but it is a
+traversal order, not a domain sort order — when you need *your* order,
+drive from your own index and filter with `can?`. For UI ergonomics,
+`grants-page` wraps it in a page envelope with a plain-data cursor:
+
+```clojure
+(authz/grants-page schema db :user user-eid :view :assignment {:limit 20})
+;;=> {:data [eid ...]
+;;    :cursor {:authz/cursor true :basis-t 1234 :eid 17592186045424 ...}}
+
+;; next page — against the same basis (hold the db value, or as-of the
+;; cursor's basis-t); mismatched basis/subject/permission fails loudly
+(authz/grants-page schema (d/as-of db (:basis-t cursor))
+                   :user user-eid :view :assignment
+                   {:limit 20 :after cursor})
+;; a nil :cursor means the enumeration is complete
+```
+
+The cursor is transparent data and contains eids — wrap or sign it at
+your trust boundary if it leaves your system. Counting a full authorized
+set is just `(count (grants ...))`.
 
 There is also `filter-authorized`, a batched `can?` (one query for any
 number of entities) — the attribute layer is built on it — and
@@ -263,9 +357,11 @@ Point checks are batched per (type, permission) pair, and
   hand-computed grant sets; a black-box functional suite
   (`functional_test.clj`) that exercises only the public API against its own
   self-contained domain — registry and world in, behavior out; and
-  generative differential tests — seeded random worlds where the compiled
-  Datalog must agree with a naive graph-walking reference interpreter on
-  every (subject, permission, object) triple. CI runs all of it on GitHub
+  generative differential tests — seeded random worlds where every
+  strategy (compiled Datalog, the point-check walker, and the `grants`
+  enumeration) must agree with a naive graph-walking reference
+  interpreter on every (subject, permission, object) triple. CI runs all
+  of it on GitHub
   Actions (`.github/workflows/ci.yml`), including a smoke test of the
   benchmark harness (each scenario executed once, no criterium timing).
 
@@ -273,7 +369,7 @@ Point checks are batched per (type, permission) pair, and
 
 ```
 src/authz/schema.clj    registry validation + compilation to Datalog
-src/authz/core.clj      can? / explain / filter-authorized / list-query(-attrs)
+src/authz/core.clj      can? / explain / filter-authorized / list-query(-attrs) / grants(-page)
 src/authz/attrs.clj     attribute allow layer: readable-datoms / check-tx
 src/authz/cache.clj     basis-t keyed (sound) point-check cache
 test/authz/fixture.clj  shared domain world (hierarchy, managers, content)

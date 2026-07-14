@@ -25,6 +25,7 @@
    "tutorial/recursion.clj"
    "tutorial/point_checks.clj"
    "tutorial/list_queries.clj"
+   "tutorial/grants.clj"
    "tutorial/watch_set.clj"
    "tutorial/sync_down.clj"
    "tutorial/sync_up.clj"
