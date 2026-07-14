@@ -6,91 +6,64 @@ precise, and so that changes to the semantics are expensive on purpose.
 
 ## Claims discipline
 
-Two sessions, one hard rule:
+One session, **`Authz`** (`checked/`), containing **no `sorry`** — every
+theorem is machine-checked end to end, and only theorems in this
+session may be described as "proven" anywhere in this repository. Every
+proof obligation from SEMANTICS.md §5 that is dischargeable against the
+model is discharged. (During development, stated-but-open theorems
+lived in a separate `quick_and_dirty` session, `Authz_Obligations`, and
+moved here only when their last `sorry` was gone; that session is
+retired — recreate it if new obligations arise.)
 
-- **`Authz`** (`checked/`) — contains **no `sorry`**. Everything here is
-  machine-checked end to end. Only theorems in this session may be
-  described as "proven" anywhere in this repository.
-- **`Authz_Obligations`** (`obligations/`) — theorem *statements* for
-  the open obligations of SEMANTICS.md §5, built with `quick_and_dirty`.
-  Each carries its proof plan as a comment. Work happens here; a theorem
-  moves to `checked/` only when its last `sorry` is gone.
+## What is proven
 
-## What is currently proven (session `Authz`)
-
-- The check language, relation extensions, polarity-labelled
-  dependencies, stratification, and safety (`Authz_Syntax`).
-- The satisfaction relation and the stratified least-fixed-point
-  semantics are **well-defined** (`Authz_Semantics`):
-  `sat_invariant` (satisfaction depends only on mentioned keys),
-  `sat_mono` (monotone when negated keys are frozen),
-  `stepF_mono` (each stratum's operator is monotone, so the least fixed
-  points exist by Knaster–Tarski),
-  `strata_mono_level` / `strata_stratum_bound` / `key_stability`
-  (strata grow, add only their own stratum's facts, and a key's facts
-  are complete at its own stratum),
-  `terminal_grants` (sanity: a bare-terminal permission denotes exactly
-  its relation extension).
-- **Safety implies finiteness** (`grants_finite`, formerly Obligation
-  E's precondition): for a safe (grounded) registry over a finite
-  database, every answer set is finite — it lives inside the active
-  domain (`generative_sat_adom` + `strata_origin` + `adom_finite`).
-  This is the proven semantic content of the groundedness validator.
-- **The characterization theorem** (`grants_iff_sat`,
-  `Authz_Semantics`): a permission holds exactly when its body is
-  satisfied over the interpretation of all grants — the semantics
-  satisfies its own equations.
+- **The model** (`Authz_Syntax`): the check language, relation
+  extensions, polarity-labelled dependencies, stratification, safety
+  (groundedness), and the active domain.
+- **Well-definedness** (`Authz_Semantics`): satisfaction invariance and
+  monotonicity, per-stratum operator monotonicity (Knaster–Tarski gives
+  the least fixed points), strata growth, stratum bounds, and key
+  stability.
+- **Safety implies finiteness** (`grants_finite`): for a grounded
+  registry over a finite database every answer set is finite — the
+  proven semantic content of the groundedness validator.
+- **The characterization theorem** (`grants_iff_sat`): a permission
+  holds exactly when its body is satisfied over the interpretation of
+  all grants — the semantics satisfies its own equations.
 - **Kleene iterates and derivation rank** (`Authz_Kleene`):
-  satisfaction is finitary (`sat_chain`), each stratum is the union of
-  its finite iterates (`strata_iter`), and `drank`/`drank_step` give
-  every granted fact a minimal derivation height with strictly
-  descending same-stratum children.
-- **Obligation W, in full** (`Authz_Walker`): `walker_sound` and
-  `walker_complete` — the visited-set walker computes `grants`. This
-  underwrites `can?`, `explain`, the reference interpreter, and the
-  verification mode of the `grants` enumeration. Proven by a single
-  well-founded induction on (fuel, check size) carrying soundness and
-  completeness simultaneously; the stratum structure enters only
-  through side conditions (`deps_le`, `vhigh`, `vcond` — the last shows
-  blocking a state a minimal derivation needs is *impossible*, not
-  merely harmless). Two corrections to the naive statements were
-  discovered en route: soundness also needs sufficient fuel (fuel death
-  inside a negation flips False to True), and the two directions are
-  mutually recursive through negation, so neither can be proven alone.
-- **Obligation E, in full** (`Authz_Enum`): the gen-graph/gen-stream
-  enumeration is modelled as an inductive candidate relation (`cand` —
-  seeds closed under consumer-chain edges, mirroring `gen-positions`),
-  and: `cand_complete` — generation misses nothing (every granted
-  object is a candidate); `cand_sound_pure` — for pure generating
-  closures (relations/chains/ors only) the raw candidates are *exactly*
-  the grants, so the implementation's unverified fast path is proven
-  exact; `enum_verified_exact` / `enum_spec_verified` — candidates
-  filtered by the proven walker equal the answer set, distinct and
-  finite. Emission order is abstracted (E1/E2 are the semantic
-  content); the stream's order-level behaviour stays with the
-  differential suite.
-
-## What is stated but open (session `Authz_Obligations`)
-
-- `sigma_independent` — the semantics does not depend on the choice of
-  stratification. A robustness statement about the spec itself; every
-  implementation-facing theorem is already discharged relative to one
-  fixed stratification.
-
-Until these are discharged, the corresponding implementation claims
-rest on the differential test suite: the bottom-up fixpoint oracle
-(`test/authz/fixpoint_oracle.clj`) implements SEMANTICS.md §3 directly
-and every strategy is tested against it on generated worlds in CI.
+  satisfaction is finitary, each stratum is the union of its finite
+  iterates, and every granted fact has a minimal derivation height with
+  strictly descending same-stratum children.
+- **Obligation W** (`Authz_Walker`): `walker_sound` and
+  `walker_complete` — the visited-set walker computes `grants`
+  (underwrites `can?`, `explain`, the reference interpreter, and the
+  verification mode of `grants`). One well-founded induction on
+  (fuel, check size) carries both directions simultaneously; the
+  `vcond` invariant shows blocking a state a minimal derivation needs
+  is *impossible*. Discovered en route: fuel-free soundness is false
+  (fuel death inside a negation flips False to True), and the two
+  directions are mutually recursive through negation.
+- **Obligation E** (`Authz_Enum`): the gen-graph/gen-stream enumeration
+  is exact. `cand_complete` (generation misses nothing),
+  `cand_sound_pure` (the pure-closure fast path is exactly the grants —
+  the implementation's unverified path, proven), and the
+  `enum_spec` capstones (candidates filtered by the proven walker equal
+  the answer set, distinct and finite). Emission order is abstracted;
+  order-level behaviour stays with the differential suite.
+- **Stratification-independence** (`Authz_Sigma`): `sigma_independent` —
+  any two stratifications yield the same `grants`; the semantics is a
+  property of the registry, not of the stratum assignment the compiler
+  happens to compute.
 
 ## Building
 
 ```sh
-mise run verify          # isabelle build -D verification (both sessions)
+mise run verify          # isabelle build -D verification
 ```
 
 Requires [Isabelle2025-2](https://isabelle.in.tum.de) on the PATH or at
 `/Applications/Isabelle2025-2.app`. The first build compiles the HOL
-heap image (minutes); later builds are incremental.
+heap image (minutes); later builds are incremental (seconds).
 
 ## Correspondence to the implementation
 
@@ -99,11 +72,18 @@ heap image (minutes); later builds are incremental.
 | `ext`                       | §1           | `rel-sources` / `rel-targets` adapters    |
 | `check`, `deps`, `stratified`, `safe` | §2 | `authz.schema` normalization + validators |
 | `sat`, `stepF`, `strata`, `grants` | §3    | `authz.fixpoint-oracle` (executable spec) |
-| `walk` (obligations)        | §5 W         | `walk-check` in `authz.core`              |
-| `enum_spec` (obligations)   | §4 E1–E3     | `grants` in `authz.core`                  |
+| `walk`, `walker_sound/complete` | §5 W     | `walk-check` in `authz.core`              |
+| `cand`, `gterms`/`gchains`, `enum_spec` | §4 E1–E3, §5 E | `gen-graph`/`gen-stream`/`grants` in `authz.core` |
+
+What no proof can reach — the ~10-line index adapter's fidelity to
+`d/datoms`, the stream's emission order, and the Datalog-compilation
+path (whose consumer is Datomic's query engine) — is pinned by the
+differential test suite in CI: every strategy against two independent
+oracles on generated worlds.
 
 Deliberate model simplifications, all noted in the theories: `And`/`Or`
-are binary (the n-ary forms fold to them; both are associative), eids
-and attributes are naturals (the semantics only compares them), and the
-negative-dependency marking is sticky under double negation (matching
-the implementation's conservative `check-stratified!`).
+are binary (the n-ary forms fold to them), eids and attributes are
+naturals (the semantics only compares them), the negative-dependency
+marking is sticky under double negation (matching the conservative
+`check-stratified!`), and the walker model is fuel-indexed (the Clojure
+walker's termination is intrinsic; at sufficient fuel they agree).

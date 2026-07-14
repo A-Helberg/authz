@@ -360,14 +360,14 @@ Point checks are batched per (type, permission) pair, and
   `test/authz/fixpoint_oracle.clj` implements that document directly and
   serves as the executable spec; the Isabelle/HOL formalization under
   [`verification/`](verification/) mechanizes it. Precisely stated:
-  **every implementation-facing theorem is machine-checked** — the
-  semantics' well-definedness, finiteness from groundedness, the
-  characterization theorem, walker correctness in full (soundness and
-  completeness of the visited-set walker that powers `can?`/`explain`),
-  and enumeration exactness in full (generation completeness, exactness
-  of the pure-closure fast path, and the verified-filter capstone for
-  `grants`). The one open statement is stratification-independence, a
-  robustness property of the spec itself. The Datalog-compilation path
+  **every theorem in the spec's proof-obligation list is machine-checked,
+  in one sorry-free session** — the semantics' well-definedness,
+  finiteness from groundedness, the characterization theorem,
+  stratification-independence, walker correctness in full (soundness
+  and completeness of the visited-set walker that powers
+  `can?`/`explain`), and enumeration exactness in full (generation
+  completeness, exactness of the pure-closure fast path, and the
+  verified-filter capstone for `grants`). The Datalog-compilation path
   rests on the differential suite permanently (its consumer is
   Datomic's query engine), and the models' fidelity to the Clojure —
   the ~10-line index adapter and emission order — is what the

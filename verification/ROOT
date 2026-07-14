@@ -1,24 +1,25 @@
-(* Two sessions with a hard claims boundary:
+(* One session, fully machine-checked, no sorries.
 
-   Authz             — machine-checked, no sorry. What the README may
-                       call "proven" lives here and only here.
-   Authz_Obligations — stated theorems awaiting proof (quick_and_dirty).
-                       Never cite these as proven.                      *)
+   Every proof obligation from SEMANTICS.md section 5 that can be
+   discharged against the model is discharged. The former
+   Authz_Obligations session (quick_and_dirty, stated-but-open theorems)
+   is retired; if new obligations arise, recreate it -- work happens
+   there and moves here only when its last sorry is gone. Only theorems
+   in this session may be described as "proven" anywhere in this
+   repository.                                                          *)
 
 session Authz in "checked" = HOL +
-  description "Stratified least-fixed-point semantics of the authz check
-    language (SEMANTICS.md sections 1-3), with monotonicity,
-    well-definedness and stability theorems. No sorries."
+  description "Machine-checked semantics and evaluation-strategy proofs
+    for the authz check language (SEMANTICS.md): stratified LFP
+    semantics with well-definedness, safety implies finiteness, the
+    characterization theorem, Kleene iterates and derivation ranks,
+    walker soundness + completeness (Obligation W), enumeration
+    exactness (Obligation E), and stratification-independence.
+    No sorries."
   theories
     Authz_Syntax
     Authz_Semantics
     Authz_Kleene
     Authz_Walker
     Authz_Enum
-
-session Authz_Obligations in "obligations" = Authz +
-  description "Open proof obligations from SEMANTICS.md section 5:
-    stratification-independence. Statements only."
-  options [quick_and_dirty]
-  theories
-    Authz_Obligations
+    Authz_Sigma

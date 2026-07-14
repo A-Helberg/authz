@@ -171,9 +171,10 @@ By Knaster–Tarski `F_n` has a least fixed point; set `I_n = lfp(F_n)`.
 
     grants_Γ,D(T, p, s, o)   iff   ((T, p), s, o) ∈ I_N
 
-Standard results carry over: the definition is independent of the choice
-of `σ` (any two stratifications yield the same `I_N`), and `I_N` is
-finite whenever `Γ` is safe.
+Standard results carry over, both machine-checked in `verification/`:
+the definition is independent of the choice of `σ` (any two
+stratifications yield the same `I_N` — `sigma_independent`), and `I_N`
+is finite whenever `Γ` is safe (`grants_finite`).
 
 **Consequences worth naming** (each corresponds to behavior the test
 suite pins):
@@ -243,10 +244,11 @@ answer changed.)
 
 ## 5. Proof obligations
 
-The named theorems the implementation is held to, in the order they
-should be discharged. W and E are mechanized (or in progress) in
-`verification/`; all are exercised by the differential suite against the
-executable spec regardless.
+The named theorems the implementation is held to. **W and E are
+mechanized and fully discharged in `verification/`** (as are the
+finiteness and stratification-independence results of §2–3); all are
+exercised by the differential suite against the executable spec
+regardless.
 
 - **V (validators sufficient).** If `compile-schema` accepts `Γ`, then
   `Γ` is well-formed (grammar side conditions), safe, and stratified —

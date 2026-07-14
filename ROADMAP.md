@@ -99,21 +99,19 @@ path gets that consistency for free. The offline path re-opens the problem
 
 ## Next
 
-- **Discharge the last proof obligation**: stratification-independence
-  (`verification/obligations/`, stated with a proof plan) — a
-  robustness statement about the spec itself; every
-  implementation-facing theorem is machine-checked. **Done, in the
-  checked session**: finiteness-from-safety (`grants_finite`), the
-  characterization theorem (`grants_iff_sat`), the Kleene/rank tower
-  (`Authz_Kleene`), Obligation W in full — `walker_sound` +
-  `walker_complete` (`Authz_Walker`; en route the naive fuel-free
+- **Executable refinement of the spec, exported to Scala** for a
+  runtime-checkable kernel: the bounded-iteration evaluator + proof it
+  equals the lfp, then `export_code` and a thin Clojure shim. All proof
+  obligations from SEMANTICS.md are otherwise **discharged and
+  machine-checked** in the single sorry-free session under
+  `verification/` — well-definedness, finiteness-from-safety, the
+  characterization theorem, the Kleene/rank tower, Obligation W
+  (`walker_sound` + `walker_complete`; en route the naive fuel-free
   soundness statement was found to be false — fuel death under
-  negation) — and Obligation E in full (`Authz_Enum`): generation
-  completeness, exactness of the pure-closure fast path (retiring the
-  code-comment argument in `authz.core`), and the verified-filter
-  capstones. Then: an executable refinement of the spec exported to
-  Scala for a runtime-checkable kernel (the bounded-iteration
-  evaluator + proof it equals the lfp).
+  negation), Obligation E (generation completeness, exactness of the
+  pure-closure fast path — retiring the code-comment argument in
+  `authz.core` — and the verified-filter capstones), and
+  stratification-independence.
 - **Random registries in the generative suite.** Worlds are generated;
   the registry is still the fixed fixture. Schema-space is where
   compilation bugs live (collision vars, SCC shapes, mutual recursion,
