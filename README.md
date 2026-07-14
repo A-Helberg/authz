@@ -349,7 +349,13 @@ afterwards, without extra configuration.
 
 `:delete` names a permission on the same type that gates
 `:db/retractEntity`; the entity's type is inferred from its declared
-attributes.
+attributes. The grant extends to the retraction of the entity's
+`:db/isComponent` closure — exactly what Datomic's cascade retracts —
+so components need no independent delete authority (marking an
+attribute `isComponent` *is* the lifecycle declaration). Only
+reachability from the named target confers this: bundled additions on
+deleted entities and retractions of unrelated entities are checked as
+ordinary writes.
 
 Point checks are batched per (type, permission) pair, and
 `can-read-attr?` / `can-write-attr?` exist for one-off checks.

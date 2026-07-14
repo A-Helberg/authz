@@ -163,6 +163,19 @@ this library closes — see the stance below the Done section.
   and pages go deep. Cursors carry their mode; mixing orders across a
   session fails loudly.
 
+- **`:db/retractEntity` component cascades** — the parent's `:delete`
+  now covers the retraction datoms of its `:db/isComponent` closure
+  (exactly what Datomic's cascade retracts), so components need no
+  independent delete authority: parent wins, because marking an
+  attribute isComponent IS the lifecycle declaration. The inheritance
+  is bounded by reachability from a named, authorized target —
+  retractions a client bundles for unrelated entities stay
+  ordinary-checked. Fixed en route: additions bundled onto a deleted
+  entity were previously excluded from write checks along with the
+  retractions (a client with only :delete could recreate the entity
+  with chosen attrs in the same tx); exclusions now cover retraction
+  datoms only.
+
 ## Offline: a stance, not a roadmap
 
 Two items used to live here — sync tokens ("zookies") and schema-version
@@ -217,6 +230,3 @@ processes adjudicate them.
 - **Parameterized caveats.** `attr=` covers literal conditions; SpiceDB
   caveats take request-time context (e.g. `ip-range`, `time-of-day`).
   Would need an args-passing convention through `can?`/`list-query`.
-- **`:db/retractEntity` component cascades.** Retraction datoms of
-  component entities are currently checked as ordinary writes on those
-  entities; a `:delete`-rule-aware cascade policy would be friendlier.

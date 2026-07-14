@@ -3,6 +3,7 @@
   transaction checking for occasionally-connected clients."
   (:require [authz.attrs :as attrs]
             [authz.fixture :as fx]
+            [authz.schema :as schema]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [datomic.api :as d]))
 
@@ -343,3 +344,79 @@
         (is (some? e))
         (is (:authz/denied (ex-data e)))
         (is (= 1 (count (:denied (ex-data e)))))))))
+
+;; ---------------------------------------------------------------------------
+;; :db/retractEntity component cascades: the parent's :delete covers the
+;; retraction datoms of its :db/isComponent closure — and nothing else
+
+(def ^:private cascade-schema-extras
+  [{:db/ident :order/id :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one :db/unique :db.unique/identity}
+   {:db/ident :order/owner :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :order/lines :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/many :db/isComponent true}
+   {:db/ident :line/sku :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :line/note :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one :db/isComponent true}
+   {:db/ident :note/text :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one}])
+
+(def ^:private cascade-registry
+  ;; line attrs are READ-ONLY and :line has no :delete rule; :note is not
+  ;; even in the registry — deleting an order must still cascade cleanly
+  (schema/compile-schema
+   {:user {}
+    :order {:relations {:order/owner :user}
+            :permissions {:own :order/owner}
+            :delete :own
+            :attrs {:order/id {:read :own}
+                    :order/owner {:read :own}
+                    :order/lines {:read :own}}}
+    :line {:relations {:order/_lines :order}
+           :permissions {:view '(-> :order/_lines :own)}
+           :attrs {:line/sku {:read :view}
+                   :line/note {:read :view}}}}))
+
+(defn- cascade-world []
+  (let [conn (fx/empty-conn)]
+    @(d/transact conn cascade-schema-extras)
+    @(d/transact conn
+       [{:db/id "ada" :user/name "CAda" :user/email "c-ada@x"}
+        {:db/id "eve" :user/name "CEve" :user/email "c-eve@x"}
+        {:db/id "o1" :order/id "o1" :order/owner "ada"
+         :order/lines [{:line/sku "sku-1"
+                        :line/note {:note/text "note-1"}}
+                       {:line/sku "sku-2"}]}
+        {:db/id "o2" :order/id "o2" :order/owner "eve"
+         :order/lines [{:line/sku "sku-3"}]}])
+    (d/db conn)))
+
+(deftest retract-entity-cascades-under-the-parents-delete
+  (let [db (cascade-world)
+        ada (d/entid db [:user/email "c-ada@x"])
+        eve (d/entid db [:user/email "c-eve@x"])
+        o1 (d/entid db [:order/id "o1"])
+        o2 (d/entid db [:order/id "o2"])
+        l3 (:db/id (first (:order/lines (d/entity db o2))))]
+    (testing "the owner's :delete covers the whole component closure,
+              two levels deep, with read-only line attrs and :note not
+              even in the registry"
+      (is (:allowed? (attrs/check-tx cascade-registry db ada
+                                     [[:db/retractEntity o1]]))))
+    (testing "the :delete rule still gates the parent itself"
+      (let [report (attrs/check-tx cascade-registry db eve
+                                   [[:db/retractEntity o1]])]
+        (is (not (:allowed? report)))
+        (is (= #{:authz/not-authorized} (into #{} (map :reason) (:denied report))))))
+    (testing "reachability guard: a bundled retraction of an UNRELATED
+              entity's attr gets no inherited authority"
+      (is (not (:allowed? (attrs/check-tx cascade-registry db ada
+                                          [[:db/retractEntity o1]
+                                           [:db/retract l3 :line/sku "sku-3"]])))))
+    (testing "additions bundled onto a deleted entity are ordinary writes,
+              not covered by :delete"
+      (is (not (:allowed? (attrs/check-tx cascade-registry db ada
+                                          [[:db/retractEntity o1]
+                                           [:db/add o1 :order/id "hax"]])))))))

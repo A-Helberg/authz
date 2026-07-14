@@ -352,6 +352,28 @@
         (deny {:e eid :form form} :authz/no-delete-rule
               (str "type " type " has no :delete rule"))))))
 
+(defn- component-closure
+  "The eids :db/retractEntity's cascade reaches from `roots` through
+  :db/isComponent attributes in db-before -- the exact set whose
+  retraction a parent's :delete authorizes. Marking an attribute
+  isComponent IS the declaration that the child's lifecycle belongs to
+  its parent, so components need no independent :delete (parent wins).
+  Only reachability from a named target confers the inheritance:
+  retractions a client bundles for unrelated entities stay
+  ordinary-checked. Cycle-safe."
+  [db roots]
+  (loop [seen (set roots) frontier (vec roots)]
+    (if-let [eid (peek frontier)]
+      (let [frontier (pop frontier)
+            children (into []
+                           (comp (filter #(:db/isComponent (d/entity db (:a %))))
+                                 (map :v)
+                                 (remove seen)
+                                 (distinct))
+                           (d/datoms db :eavt eid))]
+        (recur (into seen children) (into frontier children)))
+      seen)))
+
 (defn- check-dangling-refs
   "A ref value pointing at a new entity that has no datoms of its own (a
   tempid used only in value position) would silently create an empty
@@ -373,6 +395,14 @@
   against `db`, deny-by-default. The tx is applied speculatively (d/with)
   and the actual resulting datoms are judged — see the namespace docstring
   for the model. Nothing is durably transacted.
+
+  :db/retractEntity is gated by the target type's :delete rule, and that
+  grant extends to the retraction datoms of the target's :db/isComponent
+  closure — exactly what Datomic's cascade retracts — so components need
+  no independent delete authority (parent wins; being a component IS the
+  lifecycle declaration). The inheritance covers retractions reachable
+  from a named target only: bundled additions on deleted entities and
+  retractions of unrelated entities are checked as ordinary writes.
 
   Returns {:allowed? bool
            :denied   [{:e .. :a .. :v .. :reason kw :message str} ...]
@@ -398,8 +428,15 @@
           (let [{:keys [db-after] spec-tx-data :tx-data} (:ok result)
                 tx-eid (:tx (first spec-tx-data))
                 retract-eids (into #{} (map :eid) retract-targets)
+                ;; the :delete grant on a named target covers the
+                ;; RETRACTION datoms of its component closure (what
+                ;; Datomic's cascade produces) -- and only those:
+                ;; additions bundled onto deleted entities are ordinary
+                ;; writes, as are retractions of unreachable entities
+                cascade-eids (component-closure db retract-eids)
                 dms (into []
-                          (comp (remove #(contains? retract-eids (:e %)))
+                          (comp (remove #(and (not (:added %))
+                                              (contains? cascade-eids (:e %))))
                                 (map (fn [d] {:e (:e d)
                                               :a (d/ident db-after (:a d))
                                               :v (:v d)
