@@ -13,7 +13,7 @@
 (deftest every-benchmark-scenario-runs-and-passes-its-check
   (let [ctx (bench/build-world small-world)
         scenarios (bench/scenarios ctx)]
-    (is (= 8 (count scenarios)))
+    (is (= 11 (count scenarios)))
     (doseq [{:keys [label thunk check]} scenarios]
       (testing label
         (is (check (thunk)))))))

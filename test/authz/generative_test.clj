@@ -26,9 +26,10 @@
    [:user :view]])
 
 (defn- list-eids
-  [db type perm subject-eid]
+  [db type perm subject-eid & [all-rules?]]
   (let [collision? (= type :user)
-        opts (when collision? {:object-var '?target :subject-var '?subject})
+        opts (cond-> (when collision? {:object-var '?target :subject-var '?subject})
+               all-rules? (assoc :all-rules? true))
         obj-var (if collision? '?target (symbol (str "?" (name type))))
         subj-var (if collision? '?subject '?user)
         {:keys [where rules]} (authz/list-query* fx/compiled type perm :user opts)]
@@ -77,6 +78,7 @@
               via-can (into #{} (filter #(authz/can? fx/compiled db :user subject perm type %)) eids)
               via-batch (authz/filter-authorized fx/compiled db :user subject perm type eids)
               via-list-full (list-eids db type perm subject)
+              via-list-rules (list-eids db type perm subject true)
               via-list (set/intersection via-list-full (set eids))
               via-grants (set (authz/grants fx/compiled db :user subject perm type))]
           (is (= via-ref via-can)
@@ -93,4 +95,7 @@
                    ": fixpoint spec vs list-query (full sets)"))
           (is (= (set/intersection via-spec (set eids)) via-ref)
               (str "seed " seed " " [type perm] " subject " subject
-                   ": fixpoint spec vs reference interpreter")))))))
+                   ": fixpoint spec vs reference interpreter"))
+          (is (= via-list-full via-list-rules)
+              (str "seed " seed " " [type perm] " subject " subject
+                   ": all-rules compilation vs inline (full sets)")))))))

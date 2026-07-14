@@ -81,6 +81,26 @@
                     :where (authz/list-query fx/compiled :site :view :user)}
                    db admin)
       :check #(contains? (into #{} (map first) %) admin-site)}
+     {:label "list-query* all-rules — full authorized site listing (org admin)"
+      :thunk (fn []
+               (let [{:keys [where rules]} (authz/list-query* fx/compiled :site :view :user
+                                                              {:all-rules? true})]
+                 (d/q {:find '[?site] :in '[$ % ?user] :where where}
+                      db rules admin)))
+      :check #(contains? (into #{} (map first) %) admin-site)}
+     {:label "list-query — full authorized submission listing (site member)"
+      :thunk (fn []
+               (let [where (authz/list-query fx/compiled :submission :view :user)]
+                 (d/q {:find '[?submission] :in '[$ ?user] :where where}
+                      db member)))
+      :check #(<= 0 (count %))}
+     {:label "list-query* all-rules — full authorized submission listing (site member)"
+      :thunk (fn []
+               (let [{:keys [where rules]} (authz/list-query* fx/compiled :submission :view :user
+                                                              {:all-rules? true})]
+                 (d/q {:find '[?submission] :in '[$ % ?user] :where where}
+                      db rules member)))
+      :check #(<= 0 (count %))}
      {:label (str "readable-datoms — " (count sync-batch) " datom sync batch")
       :thunk #(attrs/readable-datoms fx/compiled db admin sync-batch)
       :check #(and (seq (:allowed %))

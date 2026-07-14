@@ -644,6 +644,14 @@
             rule-defs (into {}
                             (map (fn [k] [k (compile-rule-defs defs recursive subject-types k)]))
                             (sort-by str recursive))
+            ;; the rules-for-everything variant: every permission gets a
+            ;; named rule and chains always invoke rules, giving Datomic
+            ;; named subtrees instead of inlined or-joins (list-query*
+            ;; {:all-rules? true}; benchmark-gated, see ROADMAP)
+            all-keys (set nodes)
+            rule-defs-all (into {}
+                                (map (fn [k] [k (compile-rule-defs defs all-keys subject-types k)]))
+                                nodes)
             compiled (reduce
                       (fn [compiled [type perm :as k]]
                         (let [node (get-in defs [type :permissions perm])
@@ -660,6 +668,10 @@
                                          (sort-by str)
                                          (mapcat rule-defs)
                                          vec)
+                              rules-all (->> (reachable-nodes edges k)
+                                             (sort-by str)
+                                             (mapcat rule-defs-all)
+                                             vec)
                               ;; Top-level or branches compile separately, cost-
                               ;; ordered, so point checks can short-circuit on
                               ;; the cheap branch (usually a direct terminal).
@@ -685,6 +697,8 @@
                                   :recursive? recursive?
                                   :clauses clauses
                                   :rules rules
+                                  :clauses-rules [(list (rule-sym k) object-var subject-var)]
+                                  :rules-all rules-all
                                   :branches branches
                                   :attrs (node-attrs defs type node #{})})))
                       {}

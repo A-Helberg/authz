@@ -355,3 +355,20 @@
                                   :permissions {:view :a/u}
                                   :delete      :nope}})]
     (is (= :nope (:delete err)))))
+
+(deftest all-rules-compilation-artifacts
+  ;; every entry carries the rules-for-everything variant: a single rule
+  ;; invocation as :clauses-rules and a definition per reachable
+  ;; permission in :rules-all (list-query* {:all-rules? true})
+  (let [compiled fx/compiled]
+    (doseq [[[type perm] entry] (:compiled compiled)]
+      (is (= 1 (count (:clauses-rules entry)))
+          (str [type perm] " :clauses-rules is a single rule invocation"))
+      (is (= (schema/rule-sym [type perm])
+             (ffirst (:clauses-rules entry)))
+          (str [type perm] " invokes its own rule"))
+      (is (seq (:rules-all entry))
+          (str [type perm] " carries rule definitions"))
+      (is (contains? (into #{} (map ffirst) (:rules-all entry))
+                     (schema/rule-sym [type perm]))
+          (str [type perm] " :rules-all defines the entry's own rule")))))

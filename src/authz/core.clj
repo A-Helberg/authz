@@ -140,13 +140,24 @@
 
     (d/q {:find '[?folder] :in '[$ % ?user]
           :where (into (:where lq) my-clauses)}
-         db (:rules lq) user-eid)"
+         db (:rules lq) user-eid)
+
+  Pass {:all-rules? true} in `opts` to compile EVERY permission to a
+  named Datomic rule instead of inlining non-recursive subtrees: :where
+  becomes a single rule invocation and :rules carries a definition per
+  reachable permission. Same answers (the generative differential suite
+  holds both to the oracles); the trade-off is query-engine plan shape —
+  named reusable subtrees versus one large or-join. Benchmark on your
+  workload before preferring it; see ROADMAP for measurements."
   ([schema object-type permission subject-type]
    (list-query* schema object-type permission subject-type nil))
   ([schema object-type permission subject-type opts]
    (let [entry (checked-list-entry schema object-type permission subject-type opts)]
-     {:where (:clauses (rename-vars entry opts))
-      :rules (:rules entry)})))
+     (if (:all-rules? opts)
+       {:where (:clauses (rename-vars (assoc entry :clauses (:clauses-rules entry)) opts))
+        :rules (:rules-all entry)}
+       {:where (:clauses (rename-vars entry opts))
+        :rules (:rules entry)}))))
 
 (defn list-query-attrs
   "The set of Datomic attributes the compiled permission touches, transitively

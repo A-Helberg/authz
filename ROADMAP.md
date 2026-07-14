@@ -130,12 +130,21 @@ path gets that consistency for free. The offline path re-opens the problem
   ways, added after all negation targets are chosen so negation through
   a cycle is impossible by construction).
 
-## Next
+- **Named rules for non-recursive permissions** — measured, shipped as
+  an option, inline kept as the default. `list-query*` with
+  `{:all-rules? true}` compiles every permission to a named Datomic rule
+  (one invocation as :where, a definition per reachable permission as
+  :rules); held to both oracles as a sixth strategy in every
+  differential suite. Benchmark on the 2000-user world: the cheap site
+  listing gets ~35% slower under rules (0.60ms -> 0.81ms, indirection
+  overhead dominates small queries) while the heavy submission listing
+  gets ~20% faster (54.0ms -> 43.5ms, the shared user-:view subtree is
+  evaluated once as a set instead of re-expanded per or-branch). Verdict:
+  workload-dependent -- default stays inline, use the option where large
+  queries share subtrees, re-measure on your data (`mise run bench` has
+  side-by-side scenarios).
 
-- **Named rules for non-recursive permissions too.** Recursion forced the
-  rule machinery into existence; emitting rules for *all* permissions
-  (behind `list-query*`) would give Datomic named, reusable subtrees
-  instead of giant inlined `or-join`s. Benchmark before switching.
+## Next
 - **Sync tokens for the offline path (zookies).** Stamp every sync-down
   batch with `d/basis-t`; clients echo the last basis-t they saw. Lets the
   server detect revocations between sync points ("re-filter everything
