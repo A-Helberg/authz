@@ -370,4 +370,140 @@ proof -
     using finite_subset by blast
 qed
 
+text \<open>The characterization theorem: a permission holds exactly when its
+  body is satisfied over the interpretation of all grants -- the
+  semantics satisfies its own equations. This is the denotational
+  unfolding every evaluation-strategy proof crosses: it lets an argument
+  step from \<open>grants\<close> to one application of \<open>sat\<close> and back without
+  touching the fixpoint tower again.\<close>
+
+definition ginterp :: "reg \<Rightarrow> db \<Rightarrow> (key \<Rightarrow> nat) \<Rightarrow> interp" where
+  "ginterp \<Gamma> D \<sigma> = {(k, s, m) | k s m. grants \<Gamma> D \<sigma> k s m}"
+
+lemma ginterp_iff: "((k, s, m) \<in> ginterp \<Gamma> D \<sigma>) = grants \<Gamma> D \<sigma> k s m"
+  by (cases k) (auto simp: ginterp_def)
+
+definition lowinterp :: "reg \<Rightarrow> db \<Rightarrow> (key \<Rightarrow> nat) \<Rightarrow> nat \<Rightarrow> interp" where
+  "lowinterp \<Gamma> D \<sigma> n = (if n = 0 then {} else strata \<Gamma> D \<sigma> (n - 1))"
+
+lemma strata_lfp: "strata \<Gamma> D \<sigma> n = lfp (stepF \<Gamma> D \<sigma> n (lowinterp \<Gamma> D \<sigma> n))"
+  by (cases n) (simp_all add: lowinterp_def)
+
+lemma deps_stratum_le:
+  assumes strat: "stratified \<Gamma> \<sigma>" and pc: "perms \<Gamma> T p = Some c"
+      and mem: "k' \<in> fst ` deps \<Gamma> T c"
+  shows "\<sigma> k' \<le> \<sigma> (T, p)"
+proof -
+  from mem obtain neg where d: "(k', neg) \<in> deps \<Gamma> T c" by auto
+  from strat[unfolded stratified_def, rule_format, OF pc d]
+  show ?thesis by (cases neg) auto
+qed
+
+lemma stratum_interp_agree:
+  assumes strat: "stratified \<Gamma> \<sigma>" and le: "\<sigma> k' \<le> n"
+  shows "((k', s', m') \<in> lowinterp \<Gamma> D \<sigma> n \<union> restr \<sigma> n (strata \<Gamma> D \<sigma> n))
+           = grants \<Gamma> D \<sigma> k' s' m'"
+proof (cases "\<sigma> k' = n")
+  case True
+  have notlow: "(k', s', m') \<notin> lowinterp \<Gamma> D \<sigma> n"
+  proof (cases n)
+    case 0 then show ?thesis by (simp add: lowinterp_def)
+  next
+    case (Suc m)
+    show ?thesis
+    proof
+      assume "(k', s', m') \<in> lowinterp \<Gamma> D \<sigma> n"
+      with Suc have "(k', s', m') \<in> strata \<Gamma> D \<sigma> m"
+        by (simp add: lowinterp_def)
+      then have "\<sigma> k' \<le> m" using strata_stratum_bound[OF strat] by fastforce
+      with True Suc show False by simp
+    qed
+  qed
+  have "((k', s', m') \<in> restr \<sigma> n (strata \<Gamma> D \<sigma> n))
+          = ((k', s', m') \<in> strata \<Gamma> D \<sigma> n)"
+    using True by (auto simp: restr_def)
+  also have "\<dots> = grants \<Gamma> D \<sigma> k' s' m'"
+    using True by (simp add: grants_def)
+  finally show ?thesis using notlow by blast
+next
+  case False
+  with le have lt: "\<sigma> k' < n" by simp
+  then obtain m where n_eq: "n = Suc m" by (cases n) auto
+  have notrestr: "(k', s', m') \<notin> restr \<sigma> n (strata \<Gamma> D \<sigma> n)"
+    using False by (auto simp: restr_def)
+  have "((k', s', m') \<in> lowinterp \<Gamma> D \<sigma> n) = ((k', s', m') \<in> strata \<Gamma> D \<sigma> m)"
+    using n_eq by (simp add: lowinterp_def)
+  also have "\<dots> = ((k', s', m') \<in> strata \<Gamma> D \<sigma> (\<sigma> k'))"
+  proof -
+    have "\<sigma> k' \<le> m" using lt n_eq by simp
+    from key_stability[OF strat this] show ?thesis .
+  qed
+  also have "\<dots> = grants \<Gamma> D \<sigma> k' s' m'"
+    by (simp add: grants_def)
+  finally show ?thesis using notrestr by blast
+qed
+
+theorem grants_iff_sat:
+  assumes strat: "stratified \<Gamma> \<sigma>" and pc: "perms \<Gamma> T p = Some c"
+  shows "grants \<Gamma> D \<sigma> (T, p) s ob = sat \<Gamma> D (ginterp \<Gamma> D \<sigma>) T c s ob"
+proof -
+  define n where "n = \<sigma> (T, p)"
+  define L where "L = lowinterp \<Gamma> D \<sigma> n"
+  have lfp_eq: "strata \<Gamma> D \<sigma> n = lfp (stepF \<Gamma> D \<sigma> n L)"
+    by (simp add: strata_lfp L_def)
+  have unfold: "strata \<Gamma> D \<sigma> n = stepF \<Gamma> D \<sigma> n L (strata \<Gamma> D \<sigma> n)"
+    using lfp_unfold[OF stepF_mono[OF strat]] lfp_eq by metis
+  have agree: "\<And>k' s' m'. k' \<in> fst ` deps \<Gamma> T c \<Longrightarrow>
+                 ((k', s', m') \<in> L \<union> restr \<sigma> n (strata \<Gamma> D \<sigma> n))
+                   = ((k', s', m') \<in> ginterp \<Gamma> D \<sigma>)"
+  proof -
+    fix k' s' m' assume "k' \<in> fst ` deps \<Gamma> T c"
+    then have "\<sigma> k' \<le> n" using deps_stratum_le[OF strat pc] n_def by simp
+    from stratum_interp_agree[OF strat this]
+    show "((k', s', m') \<in> L \<union> restr \<sigma> n (strata \<Gamma> D \<sigma> n))
+            = ((k', s', m') \<in> ginterp \<Gamma> D \<sigma>)"
+      by (simp add: L_def ginterp_iff)
+  qed
+  have sat_conv: "sat \<Gamma> D (L \<union> restr \<sigma> n (strata \<Gamma> D \<sigma> n)) T c s ob
+                    = sat \<Gamma> D (ginterp \<Gamma> D \<sigma>) T c s ob"
+    by (rule sat_invariant) (rule agree)
+  show ?thesis
+  proof
+    assume "grants \<Gamma> D \<sigma> (T, p) s ob"
+    then have mem: "((T, p), s, ob) \<in> strata \<Gamma> D \<sigma> n"
+      by (simp add: grants_def n_def)
+    have notL: "((T, p), s, ob) \<notin> L"
+    proof (cases n)
+      case 0 then show ?thesis by (simp add: L_def lowinterp_def)
+    next
+      case (Suc m)
+      show ?thesis
+      proof
+        assume "((T, p), s, ob) \<in> L"
+        with Suc have "((T, p), s, ob) \<in> strata \<Gamma> D \<sigma> m"
+          by (simp add: L_def lowinterp_def)
+        then have "\<sigma> (T, p) \<le> m" using strata_stratum_bound[OF strat] by fastforce
+        with Suc n_def show False by simp
+      qed
+    qed
+    from mem have "((T, p), s, ob) \<in> stepF \<Gamma> D \<sigma> n L (strata \<Gamma> D \<sigma> n)"
+      by (subst (asm) unfold)
+    with notL obtain c' where pc': "perms \<Gamma> T p = Some c'"
+        and satI: "sat \<Gamma> D (L \<union> restr \<sigma> n (strata \<Gamma> D \<sigma> n)) T c' s ob"
+      by (auto simp: stepF_def)
+    from pc pc' have "c' = c" by simp
+    with satI sat_conv show "sat \<Gamma> D (ginterp \<Gamma> D \<sigma>) T c s ob" by simp
+  next
+    assume "sat \<Gamma> D (ginterp \<Gamma> D \<sigma>) T c s ob"
+    with sat_conv have "sat \<Gamma> D (L \<union> restr \<sigma> n (strata \<Gamma> D \<sigma> n)) T c s ob" by simp
+    with pc have step_mem: "((T, p), s, ob) \<in> stepF \<Gamma> D \<sigma> n L (strata \<Gamma> D \<sigma> n)"
+      by (auto simp: stepF_def n_def)
+    have "stepF \<Gamma> D \<sigma> n L (strata \<Gamma> D \<sigma> n) = strata \<Gamma> D \<sigma> n"
+      using unfold by (rule sym)
+    with step_mem have "((T, p), s, ob) \<in> strata \<Gamma> D \<sigma> n" by simp
+    then show "grants \<Gamma> D \<sigma> (T, p) s ob"
+      by (simp add: grants_def n_def)
+  qed
+qed
+
 end
