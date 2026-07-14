@@ -1,10 +1,14 @@
 (ns authz.generative-test
   "Differential testing: for seeded random worlds, every consumption
-  strategy (can?, filter-authorized, list-query, grants) must agree with a
-  naive graph-walking reference interpreter on every (subject, permission,
-  object) triple — and grants, being an enumeration, must reproduce the
-  full list-query result set exactly."
+  strategy (can?, filter-authorized, list-query, grants) must agree with
+  BOTH oracles on every (subject, permission, object) triple — the
+  top-down graph-walking reference interpreter (authz.reference) and the
+  bottom-up stratified fixpoint evaluator (authz.fixpoint-oracle), which
+  implements SEMANTICS.md directly and shares no evaluation strategy
+  with anything it checks. grants, being an enumeration, must reproduce
+  the full result set exactly."
   (:require [authz.core :as authz]
+            [authz.fixpoint-oracle :as oracle]
             [authz.fixture :as fx]
             [authz.reference :as ref]
             [authz.worldgen :as gen]
@@ -63,10 +67,12 @@
                                 [:organisation/name (first (:orgs world))]}])
           db (d/db conn)
           entities (world-entities db world)
-          user-eids (:user entities)]
+          user-eids (:user entities)
+          spec-facts (oracle/facts fx/compiled db)]
       (doseq [[type perm] perms-under-test
               subject user-eids]
         (let [eids (entities type)
+              via-spec (oracle/objects spec-facts type perm subject)
               via-ref (into #{} (filter #(ref/check fx/compiled db type perm subject %)) eids)
               via-can (into #{} (filter #(authz/can? fx/compiled db :user subject perm type %)) eids)
               via-batch (authz/filter-authorized fx/compiled db :user subject perm type eids)
@@ -81,4 +87,10 @@
               (str "seed " seed " " [type perm] " subject " subject ": reference vs list-query"))
           (is (= via-list-full via-grants)
               (str "seed " seed " " [type perm] " subject " subject
-                   ": grants must reproduce the full list-query result set")))))))
+                   ": grants must reproduce the full list-query result set"))
+          (is (= via-spec via-list-full)
+              (str "seed " seed " " [type perm] " subject " subject
+                   ": fixpoint spec vs list-query (full sets)"))
+          (is (= (set/intersection via-spec (set eids)) via-ref)
+              (str "seed " seed " " [type perm] " subject " subject
+                   ": fixpoint spec vs reference interpreter")))))))
