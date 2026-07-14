@@ -16,6 +16,7 @@
                  {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                  criterium/criterium {:mvn/version "0.4.6"}
                  org.slf4j/slf4j-nop {:mvn/version "2.0.13"}
+                 org.clojure/test.check {:mvn/version "1.1.1"}
                  ;; the verified kernel exported from Isabelle (see
                  ;; verification/checked/Authz_Export.thy and mise run
                  ;; kernel:build) and the Scala runtime it needs

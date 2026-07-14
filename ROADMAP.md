@@ -118,9 +118,13 @@ path gets that consistency for free. The offline path re-opens the problem
   cases, negated terminals/conditions/chains, and/attr= mixing,
   same-type collision via a reverse-relation user permission) plus
   random worlds over them; every strategy must agree with both oracles
-  on every triple (generative_registry_test.clj). Remaining refinement:
-  test.check generators for shrinking, and mutual (cross-permission)
-  recursion shapes.
+  on every triple (generative_registry_test.clj). Plus test.check
+  shrinking (registry_prop_test.clj): generators emit a plain-data
+  recipe and a total builder turns any recipe -- including every shrunk
+  mutation -- into a valid bundle, so failures minimize genuinely
+  (verified: a planted failure shrank to two types, one user, one
+  entity, one negated chain). Remaining refinement: mutual
+  (cross-permission) recursion shapes in the generators.
 
 ## Next
 
