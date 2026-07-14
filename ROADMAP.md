@@ -123,8 +123,12 @@ path gets that consistency for free. The offline path re-opens the problem
   recipe and a total builder turns any recipe -- including every shrunk
   mutation -- into a valid bundle, so failures minimize genuinely
   (verified: a planted failure shrank to two types, one user, one
-  entity, one negated chain). Remaining refinement: mutual
-  (cross-permission) recursion shapes in the generators.
+  entity, one negated chain). One builder serves both front doors (the
+  seeded generator synthesizes recipes), and generates all three
+  recursion shapes: self (:p1 via parent), same-type mutual (:p1/:p2
+  twins), and cross-type mutual (pm/pmb pairs over fresh relations both
+  ways, added after all negation targets are chosen so negation through
+  a cycle is impossible by construction).
 
 ## Next
 

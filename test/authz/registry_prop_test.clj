@@ -13,7 +13,7 @@
   When this spec fails, test.check reports the SHRUNK recipe. Reproduce
   with:
 
-    (authz.registry-prop-test/build-bundle shrunk-recipe)
+    (authz.registrygen/build-bundle shrunk-recipe)
 
   and feed the bundle to the deterministic comparison in
   authz.generative-registry-test to pinpoint the disagreeing strategy.
@@ -24,6 +24,7 @@
   (:require [authz.core :as authz]
             [authz.fixpoint-oracle :as oracle]
             [authz.reference :as ref]
+            [authz.registrygen :as rgen]
             [authz.schema :as schema]
             [clojure.set :as set]
             [clojure.test.check.clojure-test :refer [defspec]]
@@ -47,6 +48,7 @@
 (def ^:private type-gen
   (gen/hash-map :link (gen/frequency [[1 (gen/return nil)] [2 gen/nat]])
                 :parent? gen/boolean
+                :mutual? gen/boolean
                 :p0 branch-gen
                 :p1 (gen/frequency
                      [[1 (gen/return nil)]
@@ -55,128 +57,17 @@
 
 (def recipe-gen
   (gen/hash-map :types (gen/vector type-gen 1 4)
+                :cross-pairs (gen/vector (gen/hash-map :hi gen/nat
+                                                       :lo gen/nat
+                                                       :extra-base? gen/boolean)
+                                         0 2)
                 :users-n (gen/choose 1 4)
                 :entities-n (gen/choose 1 3)
                 :tape (gen/vector gen/nat 1 48)))
 
 ;; ---------------------------------------------------------------------------
-;; The builder: recipe -> valid bundle, total by construction
-
-(defn- build-branch
-  [i link pool recipe]
-  (let [owner (keyword (str "t" i) "owner")
-        flag (keyword (str "t" i) "flag")
-        chain-of (fn [n]
-                   (let [[lattr ltype] link
-                         perms (pool ltype)]
-                     (list '-> lattr (nth perms (mod n (count perms))))))
-        core (let [c (:core recipe)]
-               (if (and (vector? c) link) (chain-of (second c)) owner))
-        extras (map (fn [e]
-                      (cond
-                        (= e :flag=) (list 'attr= flag :on)
-                        (= e :not-owner) (list 'not owner)
-                        (vector? e) (if link
-                                      (list 'not (chain-of (second e)))
-                                      (list 'attr= flag :on))))
-                    (:extras recipe))]
-    (if (seq extras)
-      (apply list 'and core extras)
-      core)))
-
-(defn build-bundle
-  "recipe -> {:registry :datomic-schema :tx :type-ids :user-ids}, valid
-  for any recipe shape."
-  [{:keys [types users-n entities-n tape]}]
-  (let [n (count types)
-        users-n (max 1 (or users-n 1))
-        entities-n (max 1 (or entities-n 1))
-        tape (if (seq tape) (vec tape) [0])
-        tp (fn [i] (nth tape (mod i (count tape))))
-        state
-        (reduce
-         (fn [{:keys [pool defs]} i]
-           (let [tr (nth types i)
-                 T (keyword (str "t" i))
-                 owner (keyword (str "t" i) "owner")
-                 link (when (and (pos? i) (:link tr))
-                        [(keyword (str "t" i) "link")
-                         (keyword (str "t" (mod (:link tr) i)))])
-                 parent (when (:parent? tr) (keyword (str "t" i) "parent"))
-                 rels (cond-> {owner :user}
-                        link (assoc (first link) (second link))
-                        parent (assoc parent T))
-                 p0 (build-branch i link pool (:p0 tr))
-                 p1 (when-let [pr (:p1 tr)]
-                      (let [bs (mapv #(build-branch i link pool %) (:branches pr))
-                            bs (if (and parent (:recursive? pr))
-                                 (conj bs (list '-> parent :p1))
-                                 bs)]
-                        (when (seq bs)
-                          (if (= 1 (count bs)) (first bs) (apply list 'or bs)))))
-                 perms (cond-> {:p0 p0} p1 (assoc :p1 p1))]
-             {:pool (assoc pool T (vec (keys perms)))
-              :defs (assoc defs T {:relations rels :permissions perms})}))
-         {:pool {} :defs {}}
-         (range n))
-        registry (assoc (:defs state)
-                        :user {:relations {:t0/_owner :t0}
-                               :permissions {:pu (list '-> :t0/_owner
-                                                       (first ((:pool state) :t0)))}})
-        ref-attrs (distinct (for [[_ d] (:defs state), [rel _] (:relations d)] rel))
-        datomic-schema
-        (vec (concat
-              [{:db/ident :user/kid :db/valueType :db.type/string
-                :db/cardinality :db.cardinality/one :db/unique :db.unique/identity}]
-              (for [i (range n)]
-                {:db/ident (keyword (str "t" i) "id") :db/valueType :db.type/string
-                 :db/cardinality :db.cardinality/one :db/unique :db.unique/identity})
-              (for [i (range n)]
-                {:db/ident (keyword (str "t" i) "flag") :db/valueType :db.type/keyword
-                 :db/cardinality :db.cardinality/one})
-              (for [a ref-attrs]
-                {:db/ident a :db/valueType :db.type/ref
-                 :db/cardinality (if (= "owner" (name a))
-                                   :db.cardinality/many :db.cardinality/one)})))
-        user-ids (mapv #(str "u" %) (range users-n))
-        type-ids (into {} (for [i (range n)]
-                            [(keyword (str "t" i)) (mapv #(str "t" i "-" %) (range entities-n))]))
-        tx (-> []
-               (into (map (fn [u] {:db/id u :user/kid u})) user-ids)
-               (into (mapcat
-                      (fn [i]
-                        (let [T (keyword (str "t" i))
-                              d (get (:defs state) T)]
-                          (map-indexed
-                           (fn [j eid]
-                             (reduce
-                              (fn [m [k [rel target]]]
-                                (let [z (+ (* 31 i) (* 7 j) k)]
-                                  (cond
-                                    (= target :user)
-                                    (if (even? (tp z))
-                                      (assoc m rel
-                                             (vec (distinct
-                                                   [(nth user-ids (mod (tp (inc z)) users-n))
-                                                    (nth user-ids (mod (tp (+ z 2)) users-n))])))
-                                      m)
-                                    :else
-                                    (if (pos? (mod (tp z) 3))
-                                      (assoc m rel (nth (type-ids target)
-                                                        (mod (tp (inc z)) entities-n)))
-                                      m))))
-                              {:db/id eid
-                               (keyword (str "t" i) "id") eid
-                               (keyword (str "t" i) "flag") (if (even? (tp (+ (* 31 i) j)))
-                                                              :on :off)}
-                              (map-indexed vector (:relations d))))
-                           (type-ids T)))))
-                     (range n)))]
-    {:registry registry
-     :datomic-schema datomic-schema
-     :tx tx
-     :type-ids type-ids
-     :user-ids user-ids}))
+;; The builder lives in authz.registrygen (shared with the seeded
+;; generator); reproduce a shrunk recipe with (rgen/build-bundle recipe)
 
 ;; ---------------------------------------------------------------------------
 ;; The property: all strategies agree with both oracles on every triple
@@ -235,4 +126,4 @@
 
 (defspec shrinking-random-registries-agree 40
   (prop/for-all [recipe recipe-gen]
-                (bundle-agrees? (build-bundle recipe))))
+                (bundle-agrees? (rgen/build-bundle recipe))))
