@@ -365,7 +365,8 @@
                relation hop away
     :verify?   true when any (and ...), (not ...) or (attr= ...) appears in
                the closure — generation then over-approximates and emitted
-               candidates must pass the point-check walker"
+               candidates must pass the point-check walker
+    :closure   every [type perm] key the traversal can touch"
   [schema root]
   (loop [todo (conj clojure.lang.PersistentQueue/EMPTY root)
          visited #{}
@@ -397,7 +398,7 @@
                          (map vector chains chain-keys))
                  (or verify?
                      (boolean (some #{:and :not :attr=} (node-ops node)))))))
-      {:seeds seeds :consumers consumers :verify? verify?})))
+      {:seeds seeds :consumers consumers :verify? verify? :closure visited})))
 
 (defn- gen-stream
   "Deterministic depth-first traversal of the generating dependency graph,
@@ -433,6 +434,93 @@
                seeds)
           {})))
 
+(defn- seek-sources
+  "Like rel-sources, but ascending and seekable: the from-side entities
+  of `rel` whose target is `to-eid`, in ascending eid order, restricted
+  to eids strictly greater than `after` (nil = from the start). Backed
+  by d/seek-datoms, so resuming costs an index seek, not a scan."
+  [db rel to-eid after]
+  (let [attr (schema/underlying-attr rel)
+        aid (d/entid db attr)]
+    (when aid
+      (if (schema/reverse-relation? rel)
+        (->> (if after
+               (d/seek-datoms db :eavt to-eid aid (inc (long after)))
+               (d/seek-datoms db :eavt to-eid aid))
+             (take-while #(and (= (:e %) to-eid) (= (:a %) aid)))
+             (map :v))
+        (->> (if after
+               (d/seek-datoms db :vaet to-eid aid (inc (long after)))
+               (d/seek-datoms db :vaet to-eid aid))
+             (take-while #(and (= (:v %) to-eid) (= (:a %) aid)))
+             (map :e))))))
+
+(defn- merge-sorted
+  "Lazy ascending merge of sorted duplicate-free eid seqs, deduplicating
+  across them — the dedupe is local to the merge, so no seen sets."
+  [seqs]
+  (let [pq (java.util.PriorityQueue.
+            (max 1 (count seqs))
+            (reify java.util.Comparator
+              (compare [_ x y] (Long/compare (first x) (first y)))))]
+    (doseq [s seqs :let [s (seq s)] :when s]
+      (.add pq [(first s) (rest s)]))
+    (letfn [(pump [prev]
+              (lazy-seq
+               (loop []
+                 (when-let [[h t] (.poll pq)]
+                   (when-let [t (seq t)]
+                     (.add pq [(first t) (rest t)]))
+                   (if (and prev (= h prev))
+                     (recur)
+                     (cons h (pump h)))))))]
+      (pump nil))))
+
+(defn- sorted-cands
+  "Ascending-eid candidate stream for an ACYCLIC generating closure —
+  the seek-mode twin of gen-stream. Ascending order makes deduplication
+  local to the merge (no request-scoped seen sets) and makes the last
+  emitted eid a complete cursor: `after` restricts to strictly greater
+  candidates, pushed down to d/seek-datoms at every leaf. Chains
+  re-enumerate their (typically sparse) mid-set in full and seek each
+  mid's object stream, so a deep page costs the upstream closure plus
+  index seeks — never a replay of the pages before it."
+  [schema db type node subject-eid after]
+  (case (:op node)
+    :relation (seek-sources db (:relation node) subject-eid after)
+    :chain (let [rel (:relation node)
+                 target (get-in schema [:types type :relations rel])
+                 tnode (get-in schema [:types target :permissions (:permission node)])
+                 mids (sorted-cands schema db target tnode subject-eid nil)]
+             (merge-sorted (mapv #(seek-sources db rel % after) mids)))
+    :or (merge-sorted (mapv #(sorted-cands schema db type % subject-eid after)
+                            (:branches node)))
+    :and (sorted-cands schema db type
+                       (first (filter generative? (:branches node)))
+                       subject-eid after)
+    (:not :attr=) ()))
+
+(defn- grants-stream
+  "The (possibly resumed) grants enumeration. Mode :replay is the
+  traversal-order DFS, resumed by dropping the prefix; mode :seek is the
+  ascending-eid merge for acyclic closures, resumed by index seeks.
+  Verified per candidate when the closure is impure. `after` is an
+  emitted eid to resume strictly after, nil for the full stream."
+  [schema db object-type permission subject-eid after mode]
+  (let [entry (compiled-entry schema object-type permission)
+        root [object-type permission]
+        {:keys [verify?] :as graph} (gen-graph schema root)
+        node (get-in schema [:types object-type :permissions permission])
+        cands (if (= mode :seek)
+                (sorted-cands schema db object-type node subject-eid after)
+                (let [s (gen-stream db graph root subject-eid)]
+                  (if after (rest (drop-while #(not= after %) s)) s)))]
+    (cond->> cands
+      verify? (filter (fn [eid]
+                        (some #(walk-check schema db object-type (:node %)
+                                           subject-eid eid #{})
+                              (:branches entry)))))))
+
 (defn grants
   "The enumeration primitive: a lazy, deduplicated stream of the object
   eids over which `subject-eid` holds `permission` — the same shape as
@@ -442,11 +530,14 @@
   materialized ahead of consumption — recursive permissions enumerate
   without materializing their closure.
 
-  Order is deterministic for a given (schema, db basis, subject,
-  permission, object type) — stable enough to resume against the same
-  basis (see `grants-page`) — but it is a traversal order, NOT a domain
-  sort order. When your sort order matters and selectivity is reasonable,
-  drive from your own index and filter with `can?` instead.
+  Order is deterministic traversal order for a given (schema, db basis,
+  subject, permission, object type) — lazy from the first element, and
+  NOT a domain sort order. `grants-page` with {:order :eid} switches
+  acyclic closures to ascending-eid enumeration whose cursors resume by
+  index SEEK instead of prefix replay — see its docstring for the
+  measured trade-off. When your own sort order matters and selectivity
+  is reasonable, drive from your own index and filter with `can?`
+  instead.
 
   Composes like any seq: (take n ...) for a page, (filter pred ...) for
   your own predicates, or feed batches into your own query through an :in
@@ -457,16 +548,10 @@
   [schema db subject-type subject-eid permission object-type]
   (let [entry (compiled-entry schema object-type permission)]
     (check-subject-type! entry subject-type)
-    (let [subject-eid (d/entid db subject-eid)
-          root [object-type permission]
-          {:keys [verify?] :as graph} (gen-graph schema root)]
+    (let [subject-eid (d/entid db subject-eid)]
       (if-not subject-eid
         ()
-        (cond->> (gen-stream db graph root subject-eid)
-          verify? (filter (fn [eid]
-                            (some #(walk-check schema db object-type (:node %)
-                                               subject-eid eid #{})
-                                  (:branches entry)))))))))
+        (grants-stream schema db object-type permission subject-eid nil :replay)))))
 
 (defn grants-page
   "One page of `grants` plus a plain-data cursor for the next:
@@ -485,32 +570,56 @@
   contains eids; wrap or sign it at your trust boundary if it leaves your
   system.
 
-  Resuming replays the traversal prefix, so cost grows with paging depth.
-  For \"previous page\", keep your per-page cursor history, as with any
-  cursor API."
+  Resume cost is a measured trade-off, so it is an option. The default
+  (traversal order) replays the enumeration prefix: first pages are
+  effectively free, page N costs O(N). {:order :eid} — acyclic closures
+  only, fails loudly on recursive ones — enumerates in ascending eid
+  order and resumes by index SEEK: every page costs the same, but that
+  cost includes re-enumerating the chain mid-sets (on the benchmark
+  world: default page 1 = 0.06ms growing to 2.2ms at depth 2000; :eid
+  pages flat at ~22ms because the mid-set there is ~2000 users). Choose
+  :eid when objects vastly outnumber the upstream mids and pages go
+  deep; keep the default for shallow paging or full streaming. Pass the
+  same :order on every page of a session — cursors carry their mode and
+  a mismatch fails loudly. For \"previous page\", keep your per-page
+  cursor history, as with any cursor API."
   ([schema db subject-type subject-eid permission object-type]
    (grants-page schema db subject-type subject-eid permission object-type nil))
   ([schema db subject-type subject-eid permission object-type
-    {:keys [limit after] :or {limit 100}}]
+    {:keys [limit after order] :or {limit 100}}]
    (when-not (and (integer? limit) (pos? limit))
      (throw (ex-info "authz: :limit must be a positive integer"
                      {:authz/error true :limit limit})))
-   (let [subject-eid* (d/entid db subject-eid)
-         basis (or (d/as-of-t db) (d/basis-t db))]
+   (let [entry (compiled-entry schema object-type permission)
+         _ (check-subject-type! entry subject-type)
+         subject-eid* (d/entid db subject-eid)
+         basis (or (d/as-of-t db) (d/basis-t db))
+         recursive? (boolean (some (:recursive schema)
+                                   (:closure (gen-graph schema [object-type permission]))))
+         mode (if (= order :eid) :seek :replay)]
+     (when (and (= mode :seek) recursive?)
+       (throw (ex-info (str "authz: {:order :eid} needs an acyclic generating closure — "
+                            object-type " " permission " involves recursion, whose closure "
+                            "has no global eid order without materializing it; use the "
+                            "default traversal order")
+                       {:authz/error true
+                        :object-type object-type
+                        :permission permission})))
      (when after
        (let [expected {:basis-t basis :subject subject-eid*
-                       :permission permission :object-type object-type}]
+                       :permission permission :object-type object-type
+                       :mode mode}]
          (when-not (and (:authz/cursor after)
                         (= expected (select-keys after (keys expected))))
            (throw (ex-info (str "authz: cursor does not match this query — cursors are only "
-                                "valid for the same subject, permission, object type and db "
-                                "basis; page against (d/as-of db (:basis-t cursor)) or start "
-                                "from the first page")
+                                "valid for the same subject, permission, object type, db "
+                                "basis and schema; page against (d/as-of db (:basis-t cursor)) "
+                                "or start from the first page")
                            {:authz/error true :expected expected :cursor after})))))
-     (let [s (grants schema db subject-type subject-eid permission object-type)
-           s (if after
-               (rest (drop-while #(not= (:eid after) %) s))
-               s)
+     (let [s (if subject-eid*
+               (grants-stream schema db object-type permission subject-eid*
+                              (:eid after) mode)
+               ())
            window (into [] (take (inc limit)) s)
            more? (> (count window) limit)
            data (if more? (subvec window 0 limit) window)]
@@ -521,4 +630,5 @@
                    :subject subject-eid*
                    :permission permission
                    :object-type object-type
+                   :mode mode
                    :eid (peek data)})}))))

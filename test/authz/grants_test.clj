@@ -184,3 +184,51 @@
                                            {:limit 0})))
   (is (= () (authz/grants fx/compiled *db* :user [:user/email "ghost@x"] :view :site))
       "an unresolvable subject enumerates nothing"))
+
+(deftest eid-order-pages-are-ascending-and-seekable
+  (let [db *db*]
+    (testing ":order :eid pages enumerate ascending and equal the default's set"
+      (doseq [[type perm user-key] [[:site :view :sam] [:doc :view :uma]
+                                    [:user :view :alice] [:submission :view :alice]]]
+        (let [u (fx/user db user-key)
+              default-set (set (authz/grants fx/compiled db :user u perm type))
+              pages (loop [pages [] after nil]
+                      (let [{:keys [data cursor]}
+                            (authz/grants-page fx/compiled db :user u perm type
+                                               {:limit 2 :order :eid :after after})]
+                        (if cursor
+                          (recur (conj pages data) cursor)
+                          (conj pages data))))
+              eids (into [] cat pages)]
+          (is (= eids (vec (sort eids)))
+              (str [type perm user-key] " ascending eid order"))
+          (is (= default-set (set eids))
+              (str [type perm user-key] " same answer set as traversal order")))))
+    (testing "seek resume equals dropping over the full eid-ordered stream"
+      (doseq [[type perm user-key] [[:site :view :sam] [:doc :view :uma]]]
+        (let [u (fx/user db user-key)
+              full (vec (sort (authz/grants fx/compiled db :user u perm type)))]
+          (doseq [limit [1 2]]
+            (let [{:keys [cursor]} (authz/grants-page fx/compiled db :user u perm type
+                                                      {:limit limit :order :eid})]
+              (when cursor
+                (is (= :seek (:mode cursor)) ":eid cursors carry :seek mode")
+                (is (= (vec (take limit (drop limit full)))
+                       (:data (authz/grants-page fx/compiled db :user u perm type
+                                                 {:limit limit :order :eid
+                                                  :after cursor})))
+                    (str [type perm user-key] " limit " limit))))))))
+    (testing "the default stays traversal order with replay cursors"
+      (let [{:keys [cursor]} (authz/grants-page fx/compiled db :user (fx/user db :sam)
+                                                :view :site {:limit 1})]
+        (is (= :replay (:mode cursor)))))
+    (testing "cursors from one order cannot resume the other"
+      (let [{:keys [cursor]} (authz/grants-page fx/compiled db :user (fx/user db :sam)
+                                                :view :site {:limit 1 :order :eid})]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"cursor does not match"
+                              (authz/grants-page fx/compiled db :user (fx/user db :sam)
+                                                 :view :site {:limit 1 :after cursor})))))
+    (testing ":order :eid fails loudly on recursive closures"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"acyclic"
+                            (authz/grants-page fx/compiled db :user (fx/user db :mia)
+                                               :view :folder {:limit 1 :order :eid}))))))

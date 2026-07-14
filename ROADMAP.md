@@ -144,6 +144,25 @@ path gets that consistency for free. The offline path re-opens the problem
   queries share subtrees, re-measure on your data (`mise run bench` has
   side-by-side scenarios).
 
+- **Seek-based cursor resume for `grants`** — measured, shipped as an
+  option, replay kept as the default (moved to Done). Serializing DFS
+  traversal state is a dead end (the dedupe sets ARE the state), so the
+  seek design changes the order instead: `grants-page {:order :eid}`
+  enumerates acyclic closures in ascending eid order via a lazy k-way
+  merge of d/seek-datoms streams — dedupe becomes local to the merge (no
+  seen sets), the last emitted eid is a complete cursor, and resume is
+  an index seek per leaf stream. Recursive closures have no global eid
+  order without materializing, so they keep replay ({:order :eid} fails
+  loudly). Measured on the 2000-user world, submission listing (~3000
+  authorized, mid-set ~2000 users): replay pages go 0.085ms -> 2.218ms
+  at depth 2000 (linear); :eid pages are FLAT at ~22.8ms because every
+  page re-enumerates the mid-set — crossover on this dense-mid shape is
+  ~20k deep, while sparse-mid shapes (few orgs -> many resources) favor
+  :eid immediately. Verdict: default replay (free shallow pages, lazy
+  streaming), opt into :eid when objects vastly outnumber upstream mids
+  and pages go deep. Cursors carry their mode; mixing orders across a
+  session fails loudly.
+
 ## Next
 - **Sync tokens for the offline path (zookies).** Stamp every sync-down
   batch with `d/basis-t`; clients echo the last basis-t they saw. Lets the
@@ -172,13 +191,6 @@ path gets that consistency for free. The offline path re-opens the problem
 - **`subjects-query` / expand API.** "Who has access to X?" — the reverse
   direction of `list-query` (bind the object, list subjects), plus a tree
   expansion for admin UIs. `explain` already covers the per-subject "why".
-- **Seek-based cursor resume for `grants`.** Resuming an enumeration
-  replays the traversal prefix (deterministic order makes this correct
-  and simple), so page N costs O(pages 1..N). If paging depth ever shows
-  up in benchmarks, investigate cursors that snapshot enough traversal
-  state to seek — per-stream index positions rather than a last-emitted
-  eid. More state in the cursor, more invariants to hold; benchmark
-  first.
 - **Parameterized caveats.** `attr=` covers literal conditions; SpiceDB
   caveats take request-time context (e.g. `ip-range`, `time-of-day`).
   Would need an args-passing convention through `can?`/`list-query`.

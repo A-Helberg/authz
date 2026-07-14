@@ -219,7 +219,12 @@ materialized: "page 3 of the 500k things this user may view" costs what it
 takes to walk there, not to compute all 500k. Its order is deterministic
 for a given db basis (that's what makes cursors work), but it is a
 traversal order, not a domain sort order — when you need *your* order,
-drive from your own index and filter with `can?`. For UI ergonomics,
+drive from your own index and filter with `can?`. Deep pagination has a
+measured trade-off: default cursors resume by replaying the prefix
+(shallow pages effectively free, page N costs O(N)); `{:order :eid}`
+switches acyclic permissions to ascending-eid enumeration whose cursors
+resume by index seek — flat cost per page, paid in re-enumerating the
+chain mid-sets (see ROADMAP for numbers). For UI ergonomics,
 `grants-page` wraps it in a page envelope with a plain-data cursor:
 
 ```clojure
