@@ -57,14 +57,25 @@ Two sessions, one hard rule:
   discovered en route: soundness also needs sufficient fuel (fuel death
   inside a negation flips False to True), and the two directions are
   mutually recursive through negation, so neither can be proven alone.
+- **Obligation E, in full** (`Authz_Enum`): the gen-graph/gen-stream
+  enumeration is modelled as an inductive candidate relation (`cand` —
+  seeds closed under consumer-chain edges, mirroring `gen-positions`),
+  and: `cand_complete` — generation misses nothing (every granted
+  object is a candidate); `cand_sound_pure` — for pure generating
+  closures (relations/chains/ors only) the raw candidates are *exactly*
+  the grants, so the implementation's unverified fast path is proven
+  exact; `enum_verified_exact` / `enum_spec_verified` — candidates
+  filtered by the proven walker equal the answer set, distinct and
+  finite. Emission order is abstracted (E1/E2 are the semantic
+  content); the stream's order-level behaviour stays with the
+  differential suite.
 
 ## What is stated but open (session `Authz_Obligations`)
 
-- **E** `enum_spec` — the enumeration contract for `grants` (its
-  finiteness precondition and its walker component are both
-  discharged; what remains is modelling the gen-graph traversal).
 - `sigma_independent` — the semantics does not depend on the choice of
-  stratification.
+  stratification. A robustness statement about the spec itself; every
+  implementation-facing theorem is already discharged relative to one
+  fixed stratification.
 
 Until these are discharged, the corresponding implementation claims
 rest on the differential test suite: the bottom-up fixpoint oracle

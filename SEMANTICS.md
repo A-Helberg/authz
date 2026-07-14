@@ -265,14 +265,15 @@ executable spec regardless.
   soundness statement is unprovable). *(This theorem underwrites
   `can?`, `explain`, the reference interpreter, and the verification
   mode of `grants`.)*
-- **E (enumeration exact).** For accepted `Γ`: E1–E3 above. Split as:
-  completeness of candidate generation (`gen-positions` covers, for
-  every fact, at least one derivation — including the "`And` generates
-  from its first generative conjunct" superset argument and its
-  extension through cycles); soundness (pure closures — `Terminal` /
-  `Chain` / `Or` only — generate no non-facts, by induction over the
-  derivation order; impure closures are filtered by W); termination and
-  distinctness (the dedupe set grows within a finite domain).
+- **E (enumeration exact) — DISCHARGED** (`verification/checked/Authz_Enum.thy`):
+  for accepted `Γ`, E1–E2; E3 holds trivially of the functional model,
+  and the implementation's emission *order* remains covered by the
+  differential suite. The candidate machinery is modelled as an
+  inductive relation (seeds closed under consumer-chain edges);
+  `cand_complete` proves generation misses nothing, `cand_sound_pure`
+  proves the pure-closure fast path exact (the argument that previously
+  lived in a code comment in `authz.core`), and `enum_verified_exact`
+  composes candidate completeness with theorem W for impure closures.
 - **Q (compiled Datalog).** `list-query`'s clauses and the recursive
   rules mean `grants` *under Datomic's Datalog semantics*. Not
   mechanizable without formalizing Datomic; discharged forever by

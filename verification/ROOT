@@ -14,11 +14,11 @@ session Authz in "checked" = HOL +
     Authz_Semantics
     Authz_Kleene
     Authz_Walker
+    Authz_Enum
 
 session Authz_Obligations in "obligations" = Authz +
   description "Open proof obligations from SEMANTICS.md section 5:
-    enumeration exactness (E), stratification-independence.
-    Statements only."
+    stratification-independence. Statements only."
   options [quick_and_dirty]
   theories
     Authz_Obligations
