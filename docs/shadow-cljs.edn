@@ -1,5 +1,8 @@
 {:deps {:aliases [:cljs :test]}
- :dev-http {8080 {:root "resources/public"}}
+ ;; shadow-cljs's own dashboard/server
+ :http {:port 2030}
+ ;; the docs site
+ :dev-http {2080 {:root "resources/public"}}
  :builds
  {:app {:target     :browser
         :output-dir "resources/public/js"

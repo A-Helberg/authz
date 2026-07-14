@@ -16,6 +16,15 @@ run = "clojure -A:repl"
 description = "Run criterium benchmarks over a large generated world"
 run = "clojure -X:bench"
 
+[tasks.docs]
+description = "The docs site, ready to browse: snippet results + css, then watch on :2080"
+dir = "docs"
+run = [
+  "clojure -X:gen",
+  "bunx tailwindcss -i tailwind.css -o resources/public/css/app.css",
+  "bunx shadow-cljs -A:cljs watch app",
+]
+
 [tasks."docs:gen"]
 description = "Evaluate tutorial snippets on the JVM, capture their results"
 dir = "docs"
@@ -27,7 +36,7 @@ dir = "docs"
 run = "bunx tailwindcss -i tailwind.css -o resources/public/css/app.css"
 
 [tasks."docs:watch"]
-description = "shadow-cljs watch for the docs site on :8080 (run docs:gen and docs:css first)"
+description = "shadow-cljs watch for the docs site on :2080 (run docs:gen and docs:css first)"
 dir = "docs"
 run = "bunx shadow-cljs -A:cljs watch app"
 
