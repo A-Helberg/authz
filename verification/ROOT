@@ -12,6 +12,7 @@ session Authz in "checked" = HOL +
   theories
     Authz_Syntax
     Authz_Semantics
+    Authz_Kleene
 
 session Authz_Obligations in "obligations" = Authz +
   description "Open proof obligations from SEMANTICS.md section 5:
