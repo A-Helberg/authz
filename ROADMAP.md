@@ -252,7 +252,28 @@ reasoning isn't relitigated:
   spurious re-run load actually hurts; start with terminal-position
   filtering, which is small and sound.
 
+- **Parameterized caveats** (request-time context in conditions, à la
+  SpiceDB's `ip-range`/`time-of-day`). This is the one item that
+  reopens the check language itself — the SEMANTICS.md grammar and
+  satisfaction table, both oracles, the walker, the enumeration
+  machinery, and the entire Isabelle mechanization would need
+  re-proving. A re-verification campaign, purchased for a hypothetical:
+  no concrete request-time-context requirement exists. And the
+  architectural argument mirrors the zookie discussion — SpiceDB needs
+  caveats because its checks run in a remote service that cannot see
+  the request; ours run in-process, where the application simply ANDs
+  its contextual predicate with `can?`, or reifies stable context into
+  datoms where `attr=` already works. Revisit only with a concrete
+  requirement in hand, and expect to pay the full spec-to-proofs cost.
+
 ## Next
+
+Nothing. The roadmap is done by its own standards: every capability
+that survived scrutiny exists — measured where performance-shaped,
+proven where correctness-shaped — and everything declined carries its
+reasoning above, so it isn't relitigated by accident. The bar for new
+entries is the one this file's history set: a concrete need, a
+measurement or a theorem, and an honest verdict either way.
 - **Leopard-style transitive-closure materialization (opt-in,
   benchmark-gated, last resort).** For pathologically deep hierarchies,
   maintain a flattened ancestor ref attr and compile recursive
@@ -264,6 +285,3 @@ reasoning isn't relitigated:
   pipeline reintroduces the eventual consistency this architecture
   exists to avoid, and is not acceptable. Costs shift to write
   amplification on reparenting. Only behind real benchmark numbers.
-- **Parameterized caveats.** `attr=` covers literal conditions; SpiceDB
-  caveats take request-time context (e.g. `ip-range`, `time-of-day`).
-  Would need an args-passing convention through `can?`/`list-query`.
