@@ -208,22 +208,46 @@ The library owns "may this subject do this to this object, at this db
 value" — judgment functions over values. Transport moves facts;
 processes adjudicate them.
 
+## Weighed and declined
+
+Analyzed in full, then deliberately not built — recorded so the
+reasoning isn't relitigated:
+
+- **Statistics-based branch cost model.** Adaptive branch reordering
+  for `can?` by measured cost/hit-ratio. The preconditions multiply:
+  grant-heavy workload (denials evaluate every branch regardless) ×
+  materially wrong static order × stable skew × checks mattering at
+  all — and `can?` runs in microseconds next to millisecond queries,
+  so Amdahl caps the system-level win near zero. Against that: a
+  stateful recorder, a second entrypoint, an ops story. If a real
+  deployment ever demonstrates skew, the proportionate fix is an
+  explicit per-permission ordering hint (an afternoon; branch order is
+  provably semantics-neutral — `or` is set union in the mechanized
+  semantics), not learning machinery.
+- **Finer-grained reactive invalidation.** Entity-level filtering of
+  the watch-set's false positives (terminal-position subject checks,
+  connectivity probes). Unlike delta-sync this IS authz-layer
+  knowledge — only the permission graph knows which datoms can affect
+  which subject's answers — but there is no reactive layer in this
+  product, so it is machinery for a hypothesis. The coarse watch-set
+  (`list-query-attrs`) is complete (the frame property: no missed
+  updates, false positives only) and remains the shipped answer.
+  Revisit only if a server-push subscription system ships and measured
+  spurious re-run load actually hurts; start with terminal-position
+  filtering, which is small and sound.
+
 ## Next
-- **Finer-grained reactive invalidation.** `list-query-attrs`
-  over-approximates: any touched watched attr re-runs the subscription.
-  Given a tx datom `[e a v]`, a small connectivity probe could decide
-  whether `e` is actually linked to the subscription's subject/object
-  before re-running.
-- **Statistics-based branch cost model.** Branch ordering currently uses a
-  static pattern count. Sampling actual branch selectivity per deployment
-  (or reading Datomic index stats) would order better; Zanzibar hedges
-  requests — the analogue here is evaluating the two cheapest branches in
-  parallel and cancelling.
 - **Leopard-style transitive-closure materialization (opt-in,
-  benchmark-gated).** For very deep hierarchies, maintain a flattened
-  ancestor ref attr via a tx-listener pipeline. Violates the "no
-  materialization" core semantic, so: last resort, behind real benchmark
-  numbers, clearly opt-in.
+  benchmark-gated, last resort).** For pathologically deep hierarchies,
+  maintain a flattened ancestor ref attr and compile recursive
+  permissions into non-recursive one-hop checks over it. Violates the
+  "no materialization" core semantic. If ever built: maintain the
+  closure SYNCHRONOUSLY via a transaction function (delta computed in
+  the same tx), which keeps it consistent with every db value and
+  preserves the snapshot-correctness story — an async tx-listener
+  pipeline reintroduces the eventual consistency this architecture
+  exists to avoid, and is not acceptable. Costs shift to write
+  amplification on reparenting. Only behind real benchmark numbers.
 - **`subjects-query` / expand API.** "Who has access to X?" — the reverse
   direction of `list-query` (bind the object, list subjects), plus a tree
   expansion for admin UIs. `explain` already covers the per-subject "why".
