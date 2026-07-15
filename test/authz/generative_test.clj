@@ -98,4 +98,10 @@
                    ": fixpoint spec vs reference interpreter"))
           (is (= via-list-full via-list-rules)
               (str "seed " seed " " [type perm] " subject " subject
-                   ": all-rules compilation vs inline (full sets)")))))))
+                   ": all-rules compilation vs inline (full sets)"))))
+      (doseq [[type perm] perms-under-test
+              object (entities type)]
+        (is (= (oracle/subjects spec-facts type perm object)
+               (set (authz/subjects fx/compiled db :user perm type object)))
+            (str "seed " seed " " [type perm] " object " object
+                 ": subjects vs fixpoint spec"))))))

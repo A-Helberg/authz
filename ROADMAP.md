@@ -208,6 +208,22 @@ The library owns "may this subject do this to this object, at this db
 value" — judgment functions over values. Transport moves facts;
 processes adjudicate them.
 
+- **`subjects-query`** — "who has access to X?", complete in both
+  directions. The query path turned out to be already shipped: the
+  compiled clauses bind both variables and Datalog is
+  direction-agnostic, so binding the object as the query input lists
+  subjects (pinned by test). The enumeration path: `subjects` /
+  `subjects-page` mirror `grants`/`grants-page` — same generating
+  positions traversed inward from the object ((key, object) states;
+  terminals emit their targets, chains move the object one hop), same
+  walker verification for impure closures, same replay/:eid cursor
+  modes with the same fail-loud contracts. Held to the fixpoint oracle
+  across all differential suites, and mechanized: Authz_Subjects proves
+  the traversal exact (completeness + pure soundness + verified-filter
+  capstones), a near-verbatim mirror of Obligation E that built
+  sorry-free on the first attempt. Tree expansion for admin UIs
+  remains app territory (`explain` covers the per-subject why).
+
 ## Weighed and declined
 
 Analyzed in full, then deliberately not built — recorded so the
@@ -248,9 +264,6 @@ reasoning isn't relitigated:
   pipeline reintroduces the eventual consistency this architecture
   exists to avoid, and is not acceptable. Costs shift to write
   amplification on reparenting. Only behind real benchmark numbers.
-- **`subjects-query` / expand API.** "Who has access to X?" — the reverse
-  direction of `list-query` (bind the object, list subjects), plus a tree
-  expansion for admin UIs. `explain` already covers the per-subject "why".
 - **Parameterized caveats.** `attr=` covers literal conditions; SpiceDB
   caveats take request-time context (e.g. `ip-range`, `time-of-day`).
   Would need an args-passing convention through `can?`/`list-query`.

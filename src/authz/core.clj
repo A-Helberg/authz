@@ -632,3 +632,203 @@
                    :object-type object-type
                    :mode mode
                    :eid (peek data)})}))))
+
+;; ---------------------------------------------------------------------------
+;; subjects: the reverse enumeration ("who has access to X?")
+;;
+;; list-query's clauses already answer the reverse direction — they bind
+;; both variables and Datalog is direction-agnostic, so binding ?object
+;; as the input lists subjects. What needs machinery is the enumeration
+;; primitive: `subjects` mirrors `grants` with the roles swapped. The
+;; forward traversal fixes the subject and walks generating positions
+;; outward; the reverse fixes the object and walks the SAME positions
+;; inward — terminals emit their targets as subjects, chains move the
+;; object one hop and recurse. Dedupe is per (key, object) state (the
+;; walker's own state space), so recursive closures terminate on cyclic
+;; data; impure closures verify each candidate subject through the
+;; point-check walker, exactly like grants.
+
+(defn- rel-targets
+  "The entities `rel` reaches from `from-eid` — the forward direction,
+  lazy in index order."
+  [db rel from-eid]
+  (if (schema/reverse-relation? rel)
+    (map :e (datoms* db :vaet from-eid (schema/underlying-attr rel)))
+    (map :v (datoms* db :eavt from-eid rel))))
+
+(defn- subjects-cands
+  "Deterministic depth-first traversal over (key, object) states from
+  the root downward, with request-local dedupe of both states and
+  emitted subjects. Lazily yields candidate subject eids in discovery
+  order."
+  [schema db root-key object-eid]
+  (let [node-of (fn [[t p]] (get-in schema [:types t :permissions p]))]
+    (letfn [(step [stack states emitted]
+              (lazy-seq
+               (when-let [item (first stack)]
+                 (let [stack' (rest stack)]
+                   (if (= :subjs (:tag item))
+                     (if-let [xs (seq (:xs item))]
+                       (let [subj (first xs)
+                             item' {:tag :subjs :xs (rest xs)}]
+                         (if (contains? emitted subj)
+                           (step (cons item' stack') states emitted)
+                           (cons subj
+                                 (step (cons item' stack') states
+                                       (conj emitted subj)))))
+                       (step stack' states emitted))
+                     (let [{:keys [k o]} item]
+                       (if (contains? states [k o])
+                         (step stack' states emitted)
+                         (let [[t _] k
+                               poss (gen-positions (node-of k))
+                               emit-items
+                               (map (fn [tm] {:tag :subjs
+                                              :xs (rel-targets db (:relation tm) o)})
+                                    (filter #(= :relation (:op %)) poss))
+                               state-items
+                               (mapcat (fn [ch]
+                                         (let [target (get-in schema
+                                                              [:types t :relations
+                                                               (:relation ch)])]
+                                           (map (fn [m] {:tag :state
+                                                         :k [target (:permission ch)]
+                                                         :o m})
+                                                (rel-targets db (:relation ch) o))))
+                                       (filter #(= :chain (:op %)) poss))]
+                           (step (concat emit-items state-items stack')
+                                 (conj states [k o]) emitted)))))))))]
+      (step (list {:tag :state :k root-key :o object-eid}) #{} #{}))))
+
+(defn- seek-targets
+  "Like rel-targets, but ascending and seekable: entities `rel` reaches
+  from `from-eid`, restricted to eids strictly greater than `after`."
+  [db rel from-eid after]
+  (let [attr (schema/underlying-attr rel)
+        aid (d/entid db attr)]
+    (when aid
+      (if (schema/reverse-relation? rel)
+        (->> (if after
+               (d/seek-datoms db :vaet from-eid aid (inc (long after)))
+               (d/seek-datoms db :vaet from-eid aid))
+             (take-while #(and (= (:v %) from-eid) (= (:a %) aid)))
+             (map :e))
+        (->> (if after
+               (d/seek-datoms db :eavt from-eid aid (inc (long after)))
+               (d/seek-datoms db :eavt from-eid aid))
+             (take-while #(and (= (:e %) from-eid) (= (:a %) aid)))
+             (map :v))))))
+
+(defn- sorted-subjs
+  "Ascending-eid candidate subjects for an ACYCLIC generating closure —
+  the seek-mode twin of subjects-cands, mirroring sorted-cands with the
+  roles swapped: chains enumerate their mids from the object and seek
+  each mid's subject stream."
+  [schema db type node object-eid after]
+  (case (:op node)
+    :relation (seek-targets db (:relation node) object-eid after)
+    :chain (let [rel (:relation node)
+                 target (get-in schema [:types type :relations rel])
+                 tnode (get-in schema [:types target :permissions (:permission node)])
+                 mids (rel-targets db rel object-eid)]
+             (merge-sorted (mapv #(sorted-subjs schema db target tnode % after) mids)))
+    :or (merge-sorted (mapv #(sorted-subjs schema db type % object-eid after)
+                            (:branches node)))
+    :and (sorted-subjs schema db type
+                       (first (filter generative? (:branches node)))
+                       object-eid after)
+    (:not :attr=) ()))
+
+(defn- subjects-stream
+  "The (possibly resumed) subjects enumeration; mirror of grants-stream."
+  [schema db object-type permission object-eid after mode]
+  (let [entry (compiled-entry schema object-type permission)
+        root [object-type permission]
+        node (get-in schema [:types object-type :permissions permission])
+        {:keys [verify?]} (gen-graph schema root)
+        cands (if (= mode :seek)
+                (sorted-subjs schema db object-type node object-eid after)
+                (let [s (subjects-cands schema db root object-eid)]
+                  (if after (rest (drop-while #(not= after %) s)) s)))]
+    (cond->> cands
+      verify? (filter (fn [subj]
+                        (some #(walk-check schema db object-type (:node %)
+                                           subj object-eid #{})
+                              (:branches entry)))))))
+
+(defn subjects
+  "The reverse enumeration primitive: a lazy, deduplicated stream of the
+  subject eids holding `permission` over `object-eid` — \"who has access
+  to X?\", the admin-panel question. Mirrors `grants` with the roles
+  swapped: same traversal machinery inward from the object, same
+  per-candidate verification through the point-check walker for
+  permissions involving (and ...), (not ...) or (attr= ...), same
+  deterministic traversal order, and the same composability. (For the
+  QUERY path no new API is needed: `list-query`'s clauses bind both
+  variables, so passing the object as the query input already lists
+  subjects.) An object identifier that resolves to nothing yields an
+  empty seq."
+  [schema db subject-type permission object-type object-eid]
+  (let [entry (compiled-entry schema object-type permission)]
+    (check-subject-type! entry subject-type)
+    (let [object-eid (d/entid db object-eid)]
+      (if-not object-eid
+        ()
+        (subjects-stream schema db object-type permission object-eid nil :replay)))))
+
+(defn subjects-page
+  "One page of `subjects` plus a plain-data cursor for the next — the
+  mirror of `grants-page`, with the same contract: cursors are valid
+  only for the same object, permission, object type, db basis, schema
+  and order; mismatches fail loudly. The default (traversal order)
+  resumes by prefix replay; {:order :eid} — acyclic closures only —
+  enumerates subjects in ascending eid order and resumes by index seek."
+  ([schema db subject-type permission object-type object-eid]
+   (subjects-page schema db subject-type permission object-type object-eid nil))
+  ([schema db subject-type permission object-type object-eid
+    {:keys [limit after order] :or {limit 100}}]
+   (when-not (and (integer? limit) (pos? limit))
+     (throw (ex-info "authz: :limit must be a positive integer"
+                     {:authz/error true :limit limit})))
+   (let [entry (compiled-entry schema object-type permission)
+         _ (check-subject-type! entry subject-type)
+         object-eid* (d/entid db object-eid)
+         basis (or (d/as-of-t db) (d/basis-t db))
+         recursive? (boolean (some (:recursive schema)
+                                   (:closure (gen-graph schema [object-type permission]))))
+         mode (if (= order :eid) :seek :replay)]
+     (when (and (= mode :seek) recursive?)
+       (throw (ex-info (str "authz: {:order :eid} needs an acyclic generating closure — "
+                            object-type " " permission " involves recursion, whose closure "
+                            "has no global eid order without materializing it; use the "
+                            "default traversal order")
+                       {:authz/error true
+                        :object-type object-type
+                        :permission permission})))
+     (when after
+       (let [expected {:basis-t basis :object object-eid*
+                       :permission permission :object-type object-type
+                       :mode mode}]
+         (when-not (and (:authz/cursor after)
+                        (= expected (select-keys after (keys expected))))
+           (throw (ex-info (str "authz: cursor does not match this query — cursors are only "
+                                "valid for the same object, permission, object type, db "
+                                "basis and schema; page against (d/as-of db (:basis-t cursor)) "
+                                "or start from the first page")
+                           {:authz/error true :expected expected :cursor after})))))
+     (let [s (if object-eid*
+               (subjects-stream schema db object-type permission object-eid*
+                                (:eid after) mode)
+               ())
+           window (into [] (take (inc limit)) s)
+           more? (> (count window) limit)
+           data (if more? (subvec window 0 limit) window)]
+       {:data data
+        :cursor (when more?
+                  {:authz/cursor true
+                   :basis-t basis
+                   :object object-eid*
+                   :permission permission
+                   :object-type object-type
+                   :mode mode
+                   :eid (peek data)})}))))

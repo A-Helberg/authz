@@ -294,3 +294,16 @@
       (is (seq (set/intersection touched watch))
           "the granting tx touches watched attrs, so a reactive layer re-runs")
       (is (authz/can? fx/compiled db-after :user mark :view :site site3)))))
+
+(deftest list-query-clauses-bind-both-directions
+  ;; subjects-query for the QUERY path needs no new API: the clauses bind
+  ;; both variables and Datalog is direction-agnostic, so binding the
+  ;; OBJECT as input lists subjects
+  (let [db *db*]
+    (is (= #{:uma :vic :mark :stan :carl :alice :sam}
+           (into #{}
+                 (comp (map first)
+                       (map (fn [eid] (some #(when (= eid (fx/user db %)) %) (keys fx/users)))))
+                 (d/q {:find '[?user] :in '[$ ?site]
+                       :where (authz/list-query fx/compiled :site :view :user)}
+                      db (fx/site db "Site1")))))))

@@ -148,3 +148,10 @@
   (into #{}
         (keep (fn [[s o]] (when (= s subject) o)))
         (get I [type perm])))
+
+(defn subjects
+  "{s | grants(type, perm, s, object)} read off a `facts` result."
+  [I type perm object]
+  (into #{}
+        (keep (fn [[s o]] (when (= o object) s)))
+        (get I [type perm])))

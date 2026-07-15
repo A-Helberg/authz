@@ -218,6 +218,15 @@ the rows of `Q`'s unrestricted meaning for which the bound
 whose discharge necessarily *trusts Datomic's query engine*; it is held
 to the spec by differential testing only. See §6.)
 
+**`subjects` (the reverse enumeration)** — the mirror of `grants` with
+the roles swapped: `S = subjects(schema, db, S?, p, T, o)` satisfies
+`set(S) = {s | grants(T, p, s, o)}`, duplicate-free, deterministic per
+basis. Mechanized: `verification/checked/Authz_Subjects.thy` proves the
+(key, object)-state traversal exact (completeness unconditionally;
+soundness via purity or the verified walker filter). The *query* path
+needs no separate obligation: `list-query`'s clauses bind both
+variables, and Datalog is direction-agnostic.
+
 **`grants` (the enumeration)** — specified as three properties of the
 returned sequence `E = grants(schema, db, S, s, p, T)`:
 

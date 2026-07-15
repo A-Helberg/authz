@@ -123,7 +123,11 @@
                   (= via-ref (set/intersection via-list-full (set eids)))
                   (= via-list-full via-grants)
                   (= via-spec via-list-full)
-                  (= via-list-full via-list-rules))))))
+                  (= via-list-full via-list-rules)
+                  (every? (fn [object]
+                            (= (oracle/subjects spec-facts type perm object)
+                               (set (authz/subjects compiled db :user perm type object))))
+                          eids))))))
       (finally
         (d/delete-database uri)))))
 

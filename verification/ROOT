@@ -26,4 +26,5 @@ session Authz in "checked" = HOL +
     Authz_Enum
     Authz_Sigma
     Authz_Kernel
+    Authz_Subjects
     Authz_Export

@@ -54,6 +54,15 @@ retired — recreate it if new obligations arise.)
   any two stratifications yield the same `grants`; the semantics is a
   property of the registry, not of the stratum assignment the compiler
   happens to compute.
+- **The reverse enumeration is exact** (`Authz_Subjects`): `scand`
+  models the (key, object)-state traversal of `authz.core/subjects`;
+  `scand_complete` (no subject is missed — the same iterate induction
+  as Obligation E, riding `sat_gen_pos` with the roles swapped),
+  `scand_sound_pure` (pure closures exact, reusing
+  `gterm_sat_pure`/`gchain_sat_pure` verbatim), and the
+  `subjects_pure_exact` / `subjects_verified_exact` capstones. The
+  proof built sorry-free on the first attempt — the machinery really is
+  symmetric.
 - **The verified kernel** (`Authz_Kernel` + `Authz_Export`): an
   executable bottom-up evaluator over concrete lists — a machine-checked
   twin of the Clojure fixpoint oracle — with `kernel_correct`: whenever

@@ -78,4 +78,9 @@
             (is (= via-spec via-list-full)
                 (str "seed " seed " " [type perm] " subject " subject ": fixpoint spec vs list-query (full sets)"))
             (is (= via-list-full via-list-rules)
-                (str "seed " seed " " [type perm] " subject " subject ": all-rules vs inline (full sets)"))))))))
+                (str "seed " seed " " [type perm] " subject " subject ": all-rules vs inline (full sets)"))))
+        (doseq [object (entities type)]
+          (is (= (oracle/subjects spec-facts type perm object)
+                 (set (authz/subjects compiled db :user perm type object)))
+              (str "seed " seed " " [type perm] " object " object
+                   ": subjects vs fixpoint spec")))))))

@@ -183,6 +183,16 @@ artifacts, and you choose the driver:
 ;;    like any seq; nothing is materialized ahead of consumption, even
 ;;    for recursive permissions.
 (take 20 (authz/grants schema db :user user-eid :view :assignment))
+
+;; The REVERSE direction — "who has access to X?" — is symmetric.
+;; Queries need no new API (the clauses bind both variables; pass the
+;; object as the input):
+(d/q {:find '[?user] :in '[$ ?doc]
+      :where (authz/list-query schema :doc :view :user)}
+     db doc-eid)
+;; and `subjects`/`subjects-page` mirror `grants`/`grants-page` as the
+;; enumeration primitives, machine-checked exact like everything else:
+(authz/subjects schema db :user :view :doc doc-eid)
 ```
 
 There is also a watch-set for reactive invalidation — re-run pushed
