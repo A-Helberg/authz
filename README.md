@@ -29,12 +29,10 @@ See `ROADMAP.md` for what's done and what's next.
 
 ## Tutorial
 
-`docs/` is a guided tutorial site (built on
-[solidclj-docs](https://github.com/A-Helberg/solidclj)): every page shows a
-real snippet file next to the value it returned when evaluated against an
-in-memory Datomic — the displayed code and its result come from the same
-file, so the tutorial cannot drift from the library. A snippet that throws
-fails the docs build.
+`docs/` is a guided tutorial site: every page shows a real snippet file next
+to the value it returned when evaluated against an in-memory Datomic — the
+displayed code and its result come from the same file, so the tutorial cannot
+drift from the library. A snippet that throws fails the docs build.
 
 ```sh
 mise run docs        # everything: gen + css, then dev server on http://localhost:2080
