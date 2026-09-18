@@ -29,6 +29,9 @@ See `ROADMAP.md` for what's done and what's next.
 
 ## Tutorial
 
+Published at **<https://a-helberg.github.io/authz/>** — CI rebuilds and
+deploys it on every green push to `main`.
+
 `docs/` is a guided tutorial site: every page shows a real snippet file next
 to the value it returned when evaluated against an in-memory Datomic — the
 displayed code and its result come from the same file, so the tutorial cannot

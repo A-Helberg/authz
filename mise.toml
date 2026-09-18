@@ -62,9 +62,11 @@ dir = "docs"
 run = "bunx shadow-cljs -A:cljs watch app"
 
 [tasks."docs:build"]
-description = "Full docs release build (gen + css + shadow release)"
+description = "Full docs release build (gen + css + shadow release); output is docs/resources/public"
 dir = "docs"
 run = [
+  # drop any dev output so the build dir holds only the release bundle
+  "rm -rf resources/public/js",
   "clojure -X:gen",
   "bunx tailwindcss -i tailwind.css -o resources/public/css/app.css",
   "bunx shadow-cljs -A:cljs release app",

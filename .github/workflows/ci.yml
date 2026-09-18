@@ -95,3 +95,60 @@ jobs:
 
       - name: Check proofs
         run: isabelle build -v -D verification
+
+  # Publish the rendered tutorial to https://a-helberg.github.io/authz/.
+  # Only from main, and only once the suite above (which already evaluates and
+  # render-tests every page) is green.
+  pages:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # One deployment at a time; a later push queues behind the in-flight one
+    # instead of racing it. Scoped to this job so it never gates the suite.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          cache: true
+
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: clj-deps-${{ hashFiles('deps.edn') }}
+          restore-keys: clj-deps-
+
+      - name: Docs — install JS deps
+        run: bun install
+        working-directory: docs
+
+      # Snippet results + Tailwind + an optimized shadow-cljs release build.
+      # The site routes on the URL hash, so one index.html serves every page —
+      # no 404 fallback needed.
+      - name: Docs — release build
+        run: mise run docs:build
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/resources/public
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
