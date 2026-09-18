@@ -59,12 +59,37 @@ jobs:
           key: isabelle-2025-2-${{ hashFiles('verification/**') }}
           restore-keys: isabelle-2025-2-
 
+      # isabelle.in.tum.de is the canonical host but is regularly unreachable
+      # from GitHub runners, so walk the official mirrors. Download to a file
+      # first: piping straight into tar turns a truncated transfer into an
+      # inscrutable "gzip: stdin: unexpected end of file".
       - name: Install Isabelle
         run: |
+          set -euo pipefail
           if [ ! -x ~/isabelle-dist/Isabelle2025-2/bin/isabelle ]; then
             mkdir -p ~/isabelle-dist
-            curl -fsSL https://isabelle.in.tum.de/dist/Isabelle2025-2_linux.tar.gz \
-              | tar -xz -C ~/isabelle-dist
+            tarball="$RUNNER_TEMP/Isabelle2025-2_linux.tar.gz"
+            for url in \
+              https://isabelle.in.tum.de/dist/Isabelle2025-2_linux.tar.gz \
+              https://mirror.clarkson.edu/isabelle/dist/Isabelle2025-2_linux.tar.gz \
+              https://www.cl.cam.ac.uk/research/hvg/Isabelle/dist/Isabelle2025-2_linux.tar.gz \
+              https://proofcraft.systems/isabelle/dist/Isabelle2025-2_linux.tar.gz
+            do
+              echo "::group::Downloading $url"
+              if curl -fSL --connect-timeout 20 --max-time 900 \
+                   --retry 2 --retry-delay 5 -o "$tarball" "$url"; then
+                echo "::endgroup::"
+                break
+              fi
+              echo "::endgroup::"
+              rm -f "$tarball"
+            done
+            if [ ! -s "$tarball" ]; then
+              echo "Every Isabelle mirror failed" >&2
+              exit 1
+            fi
+            tar -xzf "$tarball" -C ~/isabelle-dist
+            rm -f "$tarball"
           fi
           echo "$HOME/isabelle-dist/Isabelle2025-2/bin" >> "$GITHUB_PATH"
 
